@@ -121,7 +121,7 @@ impl ConfigStore {
 
 pub fn base_dir() -> PathBuf {
     let mut dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    dir.push(".unreal-mcp-orchestrator");
+    dir.push(".unreal-mcphub");
     dir
 }
 

@@ -1,5 +1,5 @@
 [package]
-name = "unreal-mcp-orchestrator"
+name = "unreal-mcphub"
 version = "0.1.0"
 edition = "2024"
 

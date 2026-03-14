@@ -7,8 +7,8 @@ use crate::orchestrator;
 use crate::server;
 
 #[derive(Debug, Parser)]
-#[command(name = "unreal-mcp-orchestrator")]
-#[command(about = "Standalone Unreal-focused orchestration layer built on top of MCPHub")]
+#[command(name = "unreal-mcphub")]
+#[command(about = "Standalone Unreal-focused hub built on top of MCPHub")]
 pub struct Cli {
     #[command(subcommand)]
     command: Command,

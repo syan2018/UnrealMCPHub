@@ -1,7 +1,7 @@
 # Feature 对齐状态
 
-这份文档用于追踪旧 Python `UnrealMCPHub` 到新 Rust
-`UnrealMCPOrchestrator` 的迁移进度。
+这份文档用于追踪旧 Python Unreal Hub 到新 Rust `UnrealMCPHub`
+的迁移进度。
 
 ## 对齐基准
 
@@ -32,7 +32,7 @@
 - 持久化调用历史与 `get_session` 快照
 - `get_instance_health` 实例健康检查
 - `serve` 生命周期内的后台 watcher，包括 crash 计数与陈旧实例清理
-- 外层 orchestrator 的 HTTP serving 模式
+- 外层 hub 的 HTTP serving 模式
 - stop / restart 编辑器恢复动作
 - 当前 UnrealCopilot 工具的 UE 代理调用
 - stdio MCP facade
@@ -48,7 +48,7 @@
 - cook/package 构建动作
 - 日志 tail 与构建日志分析对齐
 - 更广义的 proxy 兼容层，目前仍偏向 UnrealCopilot
-- 对“从未在 orchestrator 里配置过、但已经在运行”的其他 UE 工程的发现仍不够完整
+- 对“从未在 hub 里配置过、但已经在运行”的其他 UE 工程的发现仍不够完整
 
 ## 命名漂移说明
 

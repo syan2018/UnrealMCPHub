@@ -471,7 +471,7 @@ pub async fn serve_stdio() -> Result<()> {
     let running = server
         .serve(transport)
         .await
-        .map_err(|error| anyhow!("failed to start UnrealMCPOrchestrator server: {error}"))?;
+        .map_err(|error| anyhow!("failed to start UnrealMCPHub server: {error}"))?;
     let watcher = ProcessWatcher::spawn();
     let result = running.waiting().await;
     watcher.stop().await;

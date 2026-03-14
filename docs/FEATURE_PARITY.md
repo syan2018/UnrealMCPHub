@@ -1,7 +1,7 @@
 # Feature Parity
 
-This document tracks migration from the older Python `UnrealMCPHub` into the
-new standalone Rust `UnrealMCPOrchestrator`.
+This document tracks migration from the older Python Unreal hub into the new
+standalone Rust `UnrealMCPHub`.
 
 ## Source of Truth
 
@@ -32,7 +32,7 @@ Concrete old surfaces include:
 - persisted call history and `get_session` snapshots
 - per-instance health inspection (`get_instance_health`)
 - background watcher during `serve`, including crash counting and stale-instance cleanup
-- HTTP serving mode for the outer orchestrator
+- HTTP serving mode for the outer hub
 - editor stop / restart actions for recovery flow
 - UE proxy calls for current UnrealCopilot tools
 - stdio MCP facade
@@ -52,7 +52,7 @@ Concrete old surfaces include:
 - richer proxy compatibility adapters beyond the current UnrealCopilot-oriented
   flows
 - discovery of completely unrelated UE projects that are running but were never
-  configured in the orchestrator
+  configured in the hub
 
 ## Notes About Naming Drift
 

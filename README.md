@@ -1,14 +1,15 @@
-# UnrealMCPOrchestrator
+# UnrealMCPHub
 
-Standalone Unreal-focused orchestration layer that vendors
+Standalone Unreal-focused hub that vendors
 [`MCPHub`](https://github.com/syan2018/MCPHub) as a git submodule and rebuilds
-the older `UnrealMCPHub` workflow around the current `UnrealCopilot` plugin.
+the earlier Python Unreal hub workflow around the current `UnrealCopilot`
+plugin.
 
 ## Design
 
 This project separates concerns into two layers:
 
-- `UnrealMCPOrchestrator`
+- `UnrealMCPHub`
   Unreal-aware lifecycle, project config, editor launch, plugin install, notes,
   crash lookup, and UE proxy tools.
 - `vendor/MCPHub`
@@ -32,8 +33,8 @@ generic MCP substrate into the reusable Rust `MCPHub` project.
 Implemented in this first standalone slice:
 
 - dedicated git repository with `MCPHub` as a submodule
-- persisted project config in `~/.unreal-mcp-orchestrator/config.json`
-- persisted instance/session state in `~/.unreal-mcp-orchestrator/state.json`
+- persisted project config in `~/.unreal-mcphub/config.json`
+- persisted instance/session state in `~/.unreal-mcphub/state.json`
 - engine detection from `.uproject` and Windows registry
 - UnrealCopilot transport discovery from project config
 - project setup, status, compile, launch, discover, use-project, use-editor
@@ -64,8 +65,20 @@ Not implemented yet:
 ## Build
 
 ```powershell
-cd UnrealMCPOrchestrator
+cd UnrealMCPHub
 cargo build
+```
+
+## Syncing Bundled MCPHub
+
+`vendor/MCPHub` is a normal git submodule pointing at the upstream MCPHub
+repository. The intended sync flow is to update that submodule from upstream
+first, then commit the new submodule pointer in `UnrealMCPHub`.
+
+```powershell
+git submodule update --remote vendor/MCPHub
+git add vendor/MCPHub
+git commit -m "chore: bump bundled mcphub"
 ```
 
 ## CLI Quick Start
@@ -73,59 +86,59 @@ cargo build
 Configure the current project:
 
 ```powershell
-target\debug\unreal-mcp-orchestrator.exe setup "D:\Projects\Games\Unreal Projects\LyraStarterGame\LyraStarterGame.uproject"
+target\debug\unreal-mcphub.exe setup "D:\Projects\Games\Unreal Projects\LyraStarterGame\LyraStarterGame.uproject"
 ```
 
 Show orchestrator state:
 
 ```powershell
-target\debug\unreal-mcp-orchestrator.exe status
+target\debug\unreal-mcphub.exe status
 ```
 
 Launch the editor and wait for MCP:
 
 ```powershell
-target\debug\unreal-mcp-orchestrator.exe launch --wait-seconds 180
+target\debug\unreal-mcphub.exe launch --wait-seconds 180
 ```
 
 Discover reachable instances:
 
 ```powershell
-target\debug\unreal-mcp-orchestrator.exe discover
+target\debug\unreal-mcphub.exe discover
 ```
 
 Inspect one instance's health:
 
 ```powershell
-target\debug\unreal-mcp-orchestrator.exe health
-target\debug\unreal-mcp-orchestrator.exe health LyraStarterGame:19840
+target\debug\unreal-mcphub.exe health
+target\debug\unreal-mcphub.exe health LyraStarterGame:19840
 ```
 
 Inspect the persisted session snapshot:
 
 ```powershell
-target\debug\unreal-mcp-orchestrator.exe session --scope full --limit 20
-target\debug\unreal-mcp-orchestrator.exe session LyraStarterGame:19840 --scope history --limit 50
+target\debug\unreal-mcphub.exe session --scope full --limit 20
+target\debug\unreal-mcphub.exe session LyraStarterGame:19840 --scope history --limit 50
 ```
 
 Mirror the active project into bundled `MCPHub`:
 
 ```powershell
-target\debug\unreal-mcp-orchestrator.exe sync-mcphub
+target\debug\unreal-mcphub.exe sync-mcphub
 ```
 
 ## MCP Server
 
-Run the orchestrator itself as a stdio MCP server:
+Run UnrealMCPHub itself as a stdio MCP server:
 
 ```powershell
-target\debug\unreal-mcp-orchestrator.exe serve
+target\debug\unreal-mcphub.exe serve
 ```
 
-Run the orchestrator as an HTTP MCP server:
+Run UnrealMCPHub as an HTTP MCP server:
 
 ```powershell
-target\debug\unreal-mcp-orchestrator.exe serve --http --host 127.0.0.1 --port 9422
+target\debug\unreal-mcphub.exe serve --http --host 127.0.0.1 --port 9422
 ```
 
 Current MCP tools:
@@ -169,8 +182,8 @@ This repository was smoke-tested against:
 Verified commands:
 
 ```powershell
-target\debug\unreal-mcp-orchestrator.exe setup "D:\Projects\Games\Unreal Projects\LyraStarterGame\LyraStarterGame.uproject"
-target\debug\unreal-mcp-orchestrator.exe launch --wait-seconds 180
-target\debug\unreal-mcp-orchestrator.exe status
-target\debug\unreal-mcp-orchestrator.exe sync-mcphub
+target\debug\unreal-mcphub.exe setup "D:\Projects\Games\Unreal Projects\LyraStarterGame\LyraStarterGame.uproject"
+target\debug\unreal-mcphub.exe launch --wait-seconds 180
+target\debug\unreal-mcphub.exe status
+target\debug\unreal-mcphub.exe sync-mcphub
 ```
