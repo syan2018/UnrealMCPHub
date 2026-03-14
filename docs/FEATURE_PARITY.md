@@ -53,15 +53,3 @@ Concrete old surfaces include:
   flows
 - discovery of completely unrelated UE projects that are running but were never
   configured in the hub
-
-## Notes About Naming Drift
-
-The old README drifted from the actual Python tool names. This new repository
-currently follows the README-oriented names where they are clearer:
-
-- `compile_project` instead of Python's `build_project`
-- `use_editor` as a direct tool instead of the older `manage_instance(action="use")`
-- `get_crash_report` as a direct tool rather than tunneling through `get_log(source="crash")`
-
-The intention is to preserve user experience while keeping the implementation
-and docs aligned.

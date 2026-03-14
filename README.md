@@ -1,9 +1,23 @@
 # UnrealMCPHub
 
+Additional documentation:
+
+- [中文说明](README.zh-CN.md)
+- [Feature Parity](docs/FEATURE_PARITY.md)
+- [功能对齐状态](docs/FEATURE_PARITY.zh-CN.md)
+
 Standalone Unreal-focused hub that vendors
 [`MCPHub`](https://github.com/syan2018/MCPHub) as a git submodule and rebuilds
 the earlier Python Unreal hub workflow around the current `UnrealCopilot`
 plugin.
+
+`UnrealMCPHub` is positioned as a lifecycle-aware Unreal hub:
+
+- manage Unreal project lifecycle through either CLI or MCP tools
+- discover configured MCP endpoints that are embedded into Unreal projects or
+  plugins
+- reconnect and keep a stable control surface across Unreal editor restarts
+- bridge the active Unreal endpoint into the bundled generic `MCPHub`
 
 ## Design
 
@@ -39,6 +53,7 @@ Implemented in this first standalone slice:
 - UnrealCopilot transport discovery from project config
 - project setup, status, compile, launch, discover, use-project, use-editor
 - dynamic discovery seeded by configured projects, known instances, and scan ports
+- stable active-instance tracking across editor stop / restart cycles
 - plugin source config and local plugin install flow
 - crash report lookup from `Saved/Crashes`
 - session notes plus persisted call history / session snapshots
@@ -60,6 +75,8 @@ Implemented in this first standalone slice:
 Not implemented yet:
 
 - richer process discovery for unrelated UE projects that are not yet configured
+- broader plugin-agnostic embedded MCP discovery beyond the current
+  UnrealCopilot-oriented transport flow
 - zip/GitHub plugin download pipeline
 
 ## Build
@@ -89,7 +106,7 @@ Configure the current project:
 target\debug\unreal-mcphub.exe setup "D:\Projects\Games\Unreal Projects\LyraStarterGame\LyraStarterGame.uproject"
 ```
 
-Show orchestrator state:
+Show hub state:
 
 ```powershell
 target\debug\unreal-mcphub.exe status
@@ -121,7 +138,7 @@ target\debug\unreal-mcphub.exe session --scope full --limit 20
 target\debug\unreal-mcphub.exe session LyraStarterGame:19840 --scope history --limit 50
 ```
 
-Mirror the active project into bundled `MCPHub`:
+Mirror the active Unreal endpoint into bundled `MCPHub`:
 
 ```powershell
 target\debug\unreal-mcphub.exe sync-mcphub
