@@ -15,7 +15,7 @@ Concrete old surfaces include:
 - instance discovery and active-instance switching
 - logs and crash retrieval
 - session notes and call history
-- UE proxy calls across dispatch-style and inventory-style MCP servers
+- tool routing over embedded Unreal MCP servers
 
 ## Implemented Here
 
@@ -23,8 +23,11 @@ Concrete old surfaces include:
 - persisted active-project config
 - compile via `Build.bat`
 - editor launch with MCP readiness wait
-- instance discovery against UnrealCopilot HTTP endpoints
-- dynamic discovery seeded by configured projects, known instances, and scan ports
+- best-effort current-directory project binding
+- configuration-driven MCP discovery strategies with a default UnrealCopilot strategy
+- multiple configured MCP targets per project
+- active MCP switching inside one project
+- instance discovery driven by configured project MCP targets
 - active-instance switching
 - local plugin source config and copy-based install
 - latest crash directory summary lookup
@@ -34,14 +37,12 @@ Concrete old surfaces include:
 - background watcher during `serve`, including crash counting and stale-instance cleanup
 - HTTP serving mode for the outer hub
 - editor stop / restart actions for recovery flow
-- UE proxy calls for current UnrealCopilot tools
+- standard MCP forwarding through generic list/call surfaces
 - stdio MCP facade
 - bridge into bundled generic `MCPHub` submodule via `sync-mcphub`
 
 ## Partially Implemented
 
-- multi-instance support now reuses configured projects, known instances, and
-  configured scan ports, but still works best once a project has been set up
 - plugin installation currently copies from a local source path instead of
   supporting zip download flows
 
@@ -49,7 +50,4 @@ Concrete old surfaces include:
 
 - cook/package build actions
 - log tail and build log analysis parity
-- richer proxy compatibility adapters beyond the current UnrealCopilot-oriented
-  flows
-- discovery of completely unrelated UE projects that are running but were never
-  configured in the hub
+- richer plugin-specific discovery strategies

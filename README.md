@@ -14,10 +14,11 @@ plugin.
 `UnrealMCPHub` is positioned as a lifecycle-aware Unreal hub:
 
 - manage Unreal project lifecycle through either CLI or MCP tools
-- discover configured MCP endpoints that are embedded into Unreal projects or
+- discover configured MCP interfaces that are embedded into Unreal projects or
   plugins
+- auto-bind the current project when launched inside an Unreal project tree
 - reconnect and keep a stable control surface across Unreal editor restarts
-- bridge the active Unreal endpoint into the bundled generic `MCPHub`
+- bridge the active Unreal MCP into the bundled generic `MCPHub`
 
 ## Design
 
@@ -25,7 +26,7 @@ This project separates concerns into two layers:
 
 - `UnrealMCPHub`
   Unreal-aware lifecycle, project config, editor launch, plugin install, notes,
-  crash lookup, and UE proxy tools.
+  crash lookup, MCP discovery, and MCP routing.
 - `vendor/MCPHub`
   Generic MCP registry, discovery, and reusable upstream hub logic, consumed as
   a git submodule.
@@ -50,33 +51,29 @@ Implemented in this first standalone slice:
 - persisted project config in `~/.unreal-mcphub/config.json`
 - persisted instance/session state in `~/.unreal-mcphub/state.json`
 - engine detection from `.uproject` and Windows registry
-- UnrealCopilot transport discovery from project config
+- best-effort auto-bind from the current working directory into the matching Unreal project
+- configuration-driven MCP discovery strategies with a default UnrealCopilot strategy
 - project setup, status, compile, launch, discover, use-project, use-editor
-- dynamic discovery seeded by configured projects, known instances, and scan ports
+- multiple configured MCP targets per project
+- active MCP switching inside one project
+- auto-discovery of the default project MCP plus manual registration of extra MCP targets
+- instance discovery driven by configured project MCP targets
 - stable active-instance tracking across editor stop / restart cycles
 - plugin source config and local plugin install flow
 - crash report lookup from `Saved/Crashes`
 - session notes plus persisted call history / session snapshots
 - background watcher during `serve` to refresh instance status and track crashes
-- per-instance health inspection for MCP endpoint reachability and process liveness
+- per-instance health inspection for MCP reachability and process liveness
 - stdio and HTTP MCP facade serving modes
 - editor stop and restart flows for crash recovery
-- UE proxy calls:
-  - `ue_status`
-  - `ue_list_tools`
-  - `ue_call`
-  - `ue_run_python`
-  - `ue_get_dispatch`
-  - `ue_call_dispatch`
+- standard MCP forwarding through `list-tools`, `call-tool`, and `sync-mcphub`
 - stdio MCP facade with the orchestration tools above
-- `sync-mcphub` bridge that mirrors the active UE endpoint into bundled
+- `sync-mcphub` bridge that mirrors the active Unreal MCP into bundled
   generic `MCPHub` via `register-http` + `discover`
 
 Not implemented yet:
 
-- richer process discovery for unrelated UE projects that are not yet configured
-- broader plugin-agnostic embedded MCP discovery beyond the current
-  UnrealCopilot-oriented transport flow
+- richer plugin-specific discovery strategies beyond the default UnrealCopilot setup
 - zip/GitHub plugin download pipeline
 
 ## Build
@@ -104,6 +101,33 @@ Configure the current project:
 
 ```powershell
 target\debug\unreal-mcphub.exe setup "D:\Projects\Games\Unreal Projects\LyraStarterGame\LyraStarterGame.uproject"
+```
+
+When launched inside a directory that belongs to a UE project, UnrealMCPHub
+will also try to bind that project automatically before running the command.
+
+Add another MCP under the active project:
+
+```powershell
+target\debug\unreal-mcphub.exe add-mcp tools-secondary --host 127.0.0.1 --port 19841 --path /mcp --activate
+```
+
+Switch the active MCP inside the current project:
+
+```powershell
+target\debug\unreal-mcphub.exe use-mcp tools-secondary
+```
+
+List tools on the active MCP:
+
+```powershell
+target\debug\unreal-mcphub.exe list-tools
+```
+
+Call one tool on the active MCP:
+
+```powershell
+target\debug\unreal-mcphub.exe call-tool get_dispatch --arguments-json "{}"
 ```
 
 Show hub state:
@@ -138,7 +162,7 @@ target\debug\unreal-mcphub.exe session --scope full --limit 20
 target\debug\unreal-mcphub.exe session LyraStarterGame:19840 --scope history --limit 50
 ```
 
-Mirror the active Unreal endpoint into bundled `MCPHub`:
+Mirror the active Unreal MCP into bundled `MCPHub`:
 
 ```powershell
 target\debug\unreal-mcphub.exe sync-mcphub
@@ -164,6 +188,10 @@ Current MCP tools:
 - `get_project_config`
 - `hub_status`
 - `use_project`
+- `use_mcp`
+- `add_project_mcp`
+- `list_tools`
+- `call_tool`
 - `compile_project`
 - `launch_editor`
 - `stop_editor`
@@ -177,13 +205,7 @@ Current MCP tools:
 - `install_plugin`
 - `get_crash_report`
 - `get_instance_health`
-- `ue_status`
-- `ue_list_tools`
-- `ue_call`
-- `ue_run_python`
-- `ue_get_dispatch`
-- `ue_call_dispatch`
-- `sync_mcphub_endpoint`
+- `sync_mcphub`
 
 ## Verified Lyra Flow
 
@@ -193,7 +215,7 @@ This repository was smoke-tested against:
   `D:\Projects\Games\Unreal Projects\LyraStarterGame\LyraStarterGame.uproject`
 - engine:
   `D:\Epic Games\UE_5.7`
-- UnrealCopilot endpoint:
+- UnrealCopilot MCP:
   `http://127.0.0.1:19840/mcp`
 
 Verified commands:

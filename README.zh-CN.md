@@ -8,15 +8,16 @@
 
 `UnrealMCPHub` 是一个面向 Unreal 的生命周期 Hub。它 vendored 了通用
 [`MCPHub`](https://github.com/syan2018/MCPHub) 作为 git submodule，并在此之上
-实现 Unreal 项目、Editor 进程和内嵌 MCP endpoint 的统一管理。
+实现 Unreal 项目、Editor 进程和内嵌 MCP 接口的统一管理。
 
 这个项目的核心目标不是只做一个启动器，也不是只做一个代理，而是提供一个
 稳定的控制中枢：
 
 - 通过 CLI 或 MCP tools 管理 Unreal 项目的生命周期
-- 根据配置识别和发现嵌入在 Unreal 工程或插件中的 MCP endpoint
+- 根据配置识别和发现嵌入在 Unreal 工程或插件中的 MCP 接口
+- 在 Unreal 工程目录中启动时，自动尝试绑定当前 project
 - 在 Unreal Editor 重启、崩溃恢复、活动实例切换时维持稳定连接语义
-- 把当前活动的 Unreal endpoint 同步到 bundled 的通用 `MCPHub`
+- 把当前活动的 Unreal MCP 同步到 bundled 的通用 `MCPHub`
 
 ## 架构分层
 
@@ -24,7 +25,7 @@
 
 - `UnrealMCPHub`
   Unreal-aware 的上层 Hub，负责项目配置、Editor 生命周期、实例发现、会话状态、
-  崩溃恢复、UE 代理调用，以及对外 MCP/CLI 表面。
+  崩溃恢复、MCP 发现与路由，以及对外 MCP/CLI 表面。
 - `vendor/MCPHub`
   通用的 MCP registry、discovery、invoke 与 facade 能力，作为可复用底座存在。
 
@@ -39,35 +40,31 @@
 - 持久化项目配置：`~/.unreal-mcphub/config.json`
 - 持久化实例与会话状态：`~/.unreal-mcphub/state.json`
 - 从 `.uproject` 与 Windows 注册表自动探测引擎
-- 从项目配置中读取 UnrealCopilot transport
+- 从当前工作目录 best-effort 自动绑定匹配的 Unreal project
+- 配置驱动的 MCP discovery strategy，默认内置 UnrealCopilot 策略
 - `setup`、`status`、`compile`、`launch`、`discover`、`use-project`、`use-editor`
-- 由已配置工程、已知实例和扫描端口共同驱动的动态发现
+- 单个 project 下可配置多个 MCP
+- 支持 project 内 active MCP 切换
+- 自动读取 project 默认 MCP，并允许手工补充额外 MCP
+- 仅基于已配置 project 的 MCP 进行实例发现
 - 跨 Editor 停止 / 重启的 active instance 追踪
 - 插件源配置与本地复制式安装
 - `Saved/Crashes` 崩溃摘要读取
 - session notes、调用历史、session snapshot
 - `serve` 生命周期内的 watcher，用于刷新实例状态、跟踪 crash、清理 stale instance
-- 实例健康检查，覆盖 endpoint reachability 与 process liveness
+- 实例健康检查，覆盖 MCP reachability 与 process liveness
 - stdio MCP facade
 - HTTP MCP facade
 - `stop_editor` / `restart_editor`
-- UE 代理调用：
-  - `ue_status`
-  - `ue_list_tools`
-  - `ue_call`
-  - `ue_run_python`
-  - `ue_get_dispatch`
-  - `ue_call_dispatch`
-- `sync-mcphub`，将当前活动 UE endpoint 同步到 bundled `MCPHub`
+- 通过 `list-tools`、`call-tool`、`sync-mcphub` 提供标准 MCP 转发
+- `sync-mcphub`，将当前活动 Unreal MCP 同步到 bundled `MCPHub`
 
 ## 仍未完成
 
-- 对“未配置但已在运行”的其他 Unreal 工程做更强发现
-- 超出当前 UnrealCopilot transport 流程的、更通用的插件内嵌 MCP 自动识别
+- 更丰富的插件专属 discovery strategy，而不只是一条默认 UnrealCopilot 策略
 - zip / GitHub 插件下载链路
 - cook / package 流程
 - 日志 tail 与构建日志分析
-- 更广义的非 UnrealCopilot proxy 兼容层
 
 ## 构建
 
@@ -92,6 +89,33 @@ git commit -m "chore: bump bundled mcphub"
 
 ```powershell
 target\debug\unreal-mcphub.exe setup "D:\Projects\Games\Unreal Projects\LyraStarterGame\LyraStarterGame.uproject"
+```
+
+如果在某个 Unreal 工程目录内启动，UnrealMCPHub 也会在执行命令前自动尝试绑定
+当前 project。
+
+给当前 active project 增加一个额外的 MCP：
+
+```powershell
+target\debug\unreal-mcphub.exe add-mcp tools-secondary --host 127.0.0.1 --port 19841 --path /mcp --activate
+```
+
+切换当前 project 的 active MCP：
+
+```powershell
+target\debug\unreal-mcphub.exe use-mcp tools-secondary
+```
+
+列出当前 active MCP 暴露的工具：
+
+```powershell
+target\debug\unreal-mcphub.exe list-tools
+```
+
+调用当前 active MCP 上的一个工具：
+
+```powershell
+target\debug\unreal-mcphub.exe call-tool get_dispatch --arguments-json "{}"
 ```
 
 查看当前 Hub 状态：
@@ -126,7 +150,7 @@ target\debug\unreal-mcphub.exe session --scope full --limit 20
 target\debug\unreal-mcphub.exe session LyraStarterGame:19840 --scope history --limit 50
 ```
 
-把当前活动 UE endpoint 同步到 bundled `MCPHub`：
+把当前活动 Unreal MCP 同步到 bundled `MCPHub`：
 
 ```powershell
 target\debug\unreal-mcphub.exe sync-mcphub
@@ -152,6 +176,10 @@ target\debug\unreal-mcphub.exe serve --http --host 127.0.0.1 --port 9422
 - `get_project_config`
 - `hub_status`
 - `use_project`
+- `use_mcp`
+- `add_project_mcp`
+- `list_tools`
+- `call_tool`
 - `compile_project`
 - `launch_editor`
 - `stop_editor`
@@ -165,10 +193,4 @@ target\debug\unreal-mcphub.exe serve --http --host 127.0.0.1 --port 9422
 - `install_plugin`
 - `get_crash_report`
 - `get_instance_health`
-- `ue_status`
-- `ue_list_tools`
-- `ue_call`
-- `ue_run_python`
-- `ue_get_dispatch`
-- `ue_call_dispatch`
-- `sync_mcphub_endpoint`
+- `sync_mcphub`
