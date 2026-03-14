@@ -19,6 +19,8 @@ enum Command {
     Serve(ServeArgs),
     Setup(SetupArgs),
     Status,
+    ListTools(ListToolsArgs),
+    CallTool(CallToolArgs),
     Compile(CompileArgs),
     Launch(LaunchArgs),
     Discover,
@@ -27,11 +29,13 @@ enum Command {
     Stop(StopArgs),
     Restart(RestartArgs),
     UseProject(UseProjectArgs),
+    UseMcp(UseMcpArgs),
+    AddMcp(AddMcpArgs),
     UseEditor(UseEditorArgs),
     InstallPlugin,
     SetPluginSource(SetPluginSourceArgs),
     CrashReport,
-    SyncMcphub,
+    SyncMcphub(SyncMcphubArgs),
 }
 
 #[derive(Debug, Args)]
@@ -60,6 +64,27 @@ struct CompileArgs {
     target: Option<String>,
     #[arg(long)]
     configuration: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct ListToolsArgs {
+    #[arg(long)]
+    project: Option<String>,
+    #[arg(long)]
+    mcp: Option<String>,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct CallToolArgs {
+    tool_name: String,
+    #[arg(long, default_value = "{}")]
+    arguments_json: String,
+    #[arg(long)]
+    project: Option<String>,
+    #[arg(long)]
+    mcp: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -111,6 +136,32 @@ struct UseProjectArgs {
 }
 
 #[derive(Debug, Args)]
+struct UseMcpArgs {
+    mcp_id: String,
+}
+
+#[derive(Debug, Args)]
+struct AddMcpArgs {
+    mcp_id: String,
+    #[arg(long)]
+    name: Option<String>,
+    #[arg(long)]
+    host: String,
+    #[arg(long)]
+    port: u16,
+    #[arg(long, default_value = "/mcp")]
+    path: String,
+    #[arg(long, default_value = "http")]
+    transport: String,
+    #[arg(long)]
+    project: Option<String>,
+    #[arg(long)]
+    auto_start: bool,
+    #[arg(long)]
+    activate: bool,
+}
+
+#[derive(Debug, Args)]
 struct SetPluginSourceArgs {
     #[arg(long)]
     local_path: Option<String>,
@@ -118,8 +169,19 @@ struct SetPluginSourceArgs {
     repo_url: Option<String>,
 }
 
+#[derive(Debug, Args)]
+struct SyncMcphubArgs {
+    #[arg(long)]
+    project: Option<String>,
+    #[arg(long)]
+    mcp: Option<String>,
+}
+
 pub async fn run() -> Result<()> {
     let cli = Cli::parse();
+    if let Err(error) = orchestrator::bind_project_from_current_dir().await {
+        eprintln!("warning: failed to auto-bind current Unreal project: {error}");
+    }
     match cli.command {
         Command::Serve(args) => {
             if args.http {
@@ -136,6 +198,33 @@ pub async fn run() -> Result<()> {
         Command::Status => {
             let status = orchestrator::hub_status()?;
             println!("{}", serde_json::to_string_pretty(&status)?);
+            Ok(())
+        }
+        Command::ListTools(args) => {
+            let tools = orchestrator::list_tools(args.project.as_deref(), args.mcp.as_deref()).await?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&tools)?);
+            } else {
+                for tool in tools {
+                    println!("{}", tool.name);
+                }
+            }
+            Ok(())
+        }
+        Command::CallTool(args) => {
+            let arguments = serde_json::from_str(&args.arguments_json)?;
+            let output = orchestrator::call_tool(
+                args.project.as_deref(),
+                args.mcp.as_deref(),
+                &args.tool_name,
+                match arguments {
+                    serde_json::Value::Object(map) => map,
+                    serde_json::Value::Null => serde_json::Map::new(),
+                    other => anyhow::bail!("expected JSON object for --arguments-json, got {other}"),
+                },
+            )
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&output)?);
             Ok(())
         }
         Command::Compile(args) => {
@@ -179,6 +268,26 @@ pub async fn run() -> Result<()> {
             println!("{}", if switched { "switched" } else { "not-found" });
             Ok(())
         }
+        Command::UseMcp(args) => {
+            let switched = orchestrator::use_mcp(&args.mcp_id)?;
+            println!("{}", if switched { "switched" } else { "not-found" });
+            Ok(())
+        }
+        Command::AddMcp(args) => {
+            let summary = orchestrator::add_project_mcp(
+                args.project.as_deref(),
+                &args.mcp_id,
+                args.name.as_deref(),
+                &args.host,
+                args.port,
+                &args.path,
+                &args.transport,
+                args.auto_start,
+                args.activate,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+            Ok(())
+        }
         Command::UseEditor(args) => {
             let switched = orchestrator::use_editor(&args.instance_key)?;
             println!("{}", if switched { "switched" } else { "not-found" });
@@ -205,8 +314,14 @@ pub async fn run() -> Result<()> {
             );
             Ok(())
         }
-        Command::SyncMcphub => {
-            println!("{}", orchestrator::sync_mcphub_endpoint()?);
+        Command::SyncMcphub(args) => {
+            println!(
+                "{}",
+                orchestrator::sync_mcphub(
+                    args.project.as_deref(),
+                    args.mcp.as_deref()
+                )?
+            );
             Ok(())
         }
     }

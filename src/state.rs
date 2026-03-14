@@ -27,6 +27,8 @@ pub struct ToolCallRecord {
 pub struct InstanceState {
     pub key: String,
     pub project_name: String,
+    #[serde(rename = "mcp_id", alias = "endpoint_id")]
+    pub endpoint_id: String,
     pub project_path: String,
     pub engine_root: String,
     pub host: String,
@@ -100,7 +102,7 @@ impl StateStore {
 
     pub fn upsert_instance(&mut self, instance: InstanceState) -> Result<()> {
         let key = if instance.key.is_empty() {
-            make_instance_key(&instance.project_name, instance.port)
+            make_instance_key(&instance.project_name, &instance.endpoint_id, instance.port)
         } else {
             instance.key.clone()
         };
@@ -271,9 +273,27 @@ impl StateStore {
             }
         }
         let lowered = identifier.to_ascii_lowercase();
-        self.data.instances.iter().find_map(|(key, instance)| {
-            (instance.project_name.to_ascii_lowercase() == lowered).then(|| key.clone())
-        })
+        let by_project = self
+            .data
+            .instances
+            .iter()
+            .filter(|(_, instance)| instance.project_name.to_ascii_lowercase() == lowered)
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        if by_project.len() == 1 {
+            return by_project.into_iter().next();
+        }
+        let by_endpoint = self
+            .data
+            .instances
+            .iter()
+            .filter(|(_, instance)| instance.endpoint_id.to_ascii_lowercase() == lowered)
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        if by_endpoint.len() == 1 {
+            return by_endpoint.into_iter().next();
+        }
+        None
     }
 }
 
@@ -285,6 +305,9 @@ fn merge_instance(
     incoming.key = key.to_string();
     if incoming.project_name.is_empty() {
         incoming.project_name = existing.project_name;
+    }
+    if incoming.endpoint_id.is_empty() {
+        incoming.endpoint_id = existing.endpoint_id;
     }
     if incoming.project_path.is_empty() {
         incoming.project_path = existing.project_path;
@@ -329,12 +352,17 @@ fn parse_timestamp_secs(value: &str) -> Option<u64> {
     value.parse::<u64>().ok()
 }
 
-pub fn make_instance_key(project_name: &str, port: u16) -> String {
+pub fn make_instance_key(project_name: &str, endpoint_id: &str, port: u16) -> String {
     let name = project_name.trim();
-    if name.is_empty() {
+    let endpoint = endpoint_id.trim();
+    if name.is_empty() && endpoint.is_empty() {
         format!("unknown:{port}")
-    } else {
+    } else if name.is_empty() {
+        format!("{endpoint}:{port}")
+    } else if endpoint.is_empty() {
         format!("{name}:{port}")
+    } else {
+        format!("{name}:{endpoint}:{port}")
     }
 }
 

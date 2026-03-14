@@ -5,6 +5,8 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::config::{EndpointDiscoveryStrategy, ProjectMcpEndpoint};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnrealProjectPaths {
     pub project_name: String,
@@ -17,24 +19,9 @@ pub struct UnrealProjectPaths {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CopilotTransportConfig {
-    pub host: String,
-    pub port: u16,
-    pub path: String,
-    pub transport: String,
-    pub auto_start: bool,
-}
-
-impl Default for CopilotTransportConfig {
-    fn default() -> Self {
-        Self {
-            host: "127.0.0.1".to_string(),
-            port: 19840,
-            path: "/mcp".to_string(),
-            transport: "http".to_string(),
-            auto_start: false,
-        }
-    }
+pub struct DiscoveredProjectEndpoint {
+    pub endpoint: ProjectMcpEndpoint,
+    pub matched_strategy: bool,
 }
 
 pub fn find_uproject(start: &Path) -> Result<PathBuf> {
@@ -119,56 +106,19 @@ pub fn resolve_project_paths(
     })
 }
 
-pub fn read_copilot_transport(project_dir: &Path) -> Result<CopilotTransportConfig> {
-    let mut config = CopilotTransportConfig::default();
-    let files = [
-        project_dir
-            .join("Config")
-            .join("DefaultEditorPerProjectUserSettings.ini"),
-        project_dir
-            .join("Saved")
-            .join("Config")
-            .join("WindowsEditor")
-            .join("EditorPerProjectUserSettings.ini"),
-    ];
-
-    for path in files {
-        if !path.is_file() {
-            continue;
-        }
-
-        let raw = fs::read_to_string(&path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
-        let mut in_section = false;
-        for line in raw.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with('[') && trimmed.ends_with(']') {
-                in_section =
-                    trimmed.eq_ignore_ascii_case("[/Script/UnrealCopilot.UnrealCopilotSettings]");
-                continue;
-            }
-            if !in_section || trimmed.is_empty() || trimmed.starts_with(';') {
-                continue;
-            }
-            let Some((key, value)) = trimmed.split_once('=') else {
-                continue;
-            };
-            match key.trim() {
-                "McpHost" => config.host = value.trim().to_string(),
-                "McpPort" => {
-                    if let Ok(port) = value.trim().parse::<u16>() {
-                        config.port = port;
-                    }
-                }
-                "McpPath" => config.path = normalize_path(value.trim()),
-                "Transport" => config.transport = normalize_transport(value.trim()),
-                "bAutoStartMcpServer" => config.auto_start = parse_bool(value.trim()),
-                _ => {}
-            }
+pub fn read_project_mcp_endpoints(
+    project_name: &str,
+    project_dir: &Path,
+    strategies: &[EndpointDiscoveryStrategy],
+) -> Result<Vec<ProjectMcpEndpoint>> {
+    let mut endpoints = Vec::new();
+    for strategy in strategies {
+        let discovered = read_strategy_endpoint(project_name, project_dir, strategy)?;
+        if discovered.matched_strategy || strategy.always_include {
+            endpoints.push(discovered.endpoint);
         }
     }
-
-    Ok(config)
+    Ok(endpoints)
 }
 
 pub fn normalize_endpoint_id(project_name: &str) -> String {
@@ -188,6 +138,111 @@ pub fn normalize_endpoint_id(project_name: &str) -> String {
         "unreal-local".to_string()
     } else {
         format!("{out}-local")
+    }
+}
+
+pub fn normalize_strategy_endpoint_id(project_name: &str, strategy_name: &str) -> String {
+    let project = normalize_id_segment(project_name);
+    let strategy = normalize_id_segment(strategy_name);
+    if strategy.is_empty() || matches!(strategy.as_str(), "default" | "unrealcopilot") {
+        normalize_endpoint_id(project_name)
+    } else if project.is_empty() {
+        format!("{strategy}-local")
+    } else {
+        format!("{project}-{strategy}-local")
+    }
+}
+
+fn normalize_id_segment(value: &str) -> String {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            last_dash = false;
+        } else if !last_dash {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+fn read_strategy_endpoint(
+    project_name: &str,
+    project_dir: &Path,
+    strategy: &EndpointDiscoveryStrategy,
+) -> Result<DiscoveredProjectEndpoint> {
+    let mut endpoint = ProjectMcpEndpoint {
+        name: strategy.name.clone(),
+        endpoint_id: normalize_strategy_endpoint_id(project_name, &strategy.name),
+        host: strategy.default_host.clone(),
+        port: strategy.default_port,
+        path: normalize_path(&strategy.default_path),
+        transport: normalize_transport(&strategy.default_transport),
+        auto_start: strategy.default_auto_start,
+    };
+    let mut matched = false;
+
+    for relative in &strategy.config_files {
+        let path = project_dir.join(relative);
+        if !path.is_file() {
+            continue;
+        }
+
+        let raw = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        let mut in_section = false;
+        for line in raw.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('[') && trimmed.ends_with(']') {
+                in_section = trimmed.eq_ignore_ascii_case(&format!("[{}]", strategy.section));
+                if in_section {
+                    matched = true;
+                }
+                continue;
+            }
+            if !in_section || trimmed.is_empty() || trimmed.starts_with(';') {
+                continue;
+            }
+            let Some((key, value)) = trimmed.split_once('=') else {
+                continue;
+            };
+            matched = true;
+            match key.trim() {
+                key if key.eq_ignore_ascii_case(&strategy.host_key) => {
+                    endpoint.host = value_or_default(value.trim(), &endpoint.host).to_string();
+                }
+                key if key.eq_ignore_ascii_case(&strategy.port_key) => {
+                    if let Ok(port) = value.trim().parse::<u16>() {
+                        endpoint.port = port;
+                    }
+                }
+                key if key.eq_ignore_ascii_case(&strategy.path_key) => {
+                    endpoint.path = normalize_path(value.trim());
+                }
+                key if key.eq_ignore_ascii_case(&strategy.transport_key) => {
+                    endpoint.transport = normalize_transport(value.trim());
+                }
+                key if key.eq_ignore_ascii_case(&strategy.auto_start_key) => {
+                    endpoint.auto_start = parse_bool(value.trim());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(DiscoveredProjectEndpoint {
+        endpoint,
+        matched_strategy: matched,
+    })
+}
+
+fn value_or_default<'a>(value: &'a str, fallback: &'a str) -> &'a str {
+    if value.trim().is_empty() {
+        fallback
+    } else {
+        value
     }
 }
 

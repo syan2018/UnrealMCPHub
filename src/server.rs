@@ -49,6 +49,28 @@ struct UseProjectRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+struct UseMcpRequest {
+    mcp_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+struct AddMcpRequest {
+    project: Option<String>,
+    mcp_id: String,
+    name: Option<String>,
+    host: String,
+    port: u16,
+    #[serde(default = "default_mcp_path")]
+    path: String,
+    #[serde(default = "default_mcp_transport")]
+    transport: String,
+    #[serde(default)]
+    auto_start: bool,
+    #[serde(default)]
+    activate: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 struct AddNoteRequest {
     content: String,
 }
@@ -60,28 +82,18 @@ struct SetPluginSourceRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct UeCallRequest {
+struct McpSelectorRequest {
+    project: Option<String>,
+    mcp: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+struct McpCallRequest {
+    project: Option<String>,
+    mcp: Option<String>,
     tool_name: String,
     #[serde(default)]
     arguments: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct DispatchRequest {
-    domain: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct DispatchCallRequest {
-    domain: String,
-    tool_name: String,
-    #[serde(default)]
-    arguments: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct RunPythonRequest {
-    script: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -199,6 +211,46 @@ impl UnrealFacade {
         } else {
             Err(format!("project '{}' not found", request.project_name))
         }
+    }
+
+    #[tool(
+        name = "use_mcp",
+        description = "Switch the active MCP target inside the active Unreal project."
+    )]
+    async fn use_mcp(
+        &self,
+        Parameters(request): Parameters<UseMcpRequest>,
+    ) -> Result<String, String> {
+        let switched = orchestrator::use_mcp(&request.mcp_id).map_err(to_tool_error)?;
+        if switched {
+            Ok(format!("active mcp switched to {}", request.mcp_id))
+        } else {
+            Err(format!("mcp '{}' not found", request.mcp_id))
+        }
+    }
+
+    #[tool(
+        name = "add_project_mcp",
+        description = "Add or update one MCP target under a configured Unreal project."
+    )]
+    async fn add_project_mcp(
+        &self,
+        Parameters(request): Parameters<AddMcpRequest>,
+    ) -> Result<Json<orchestrator::ProjectSummary>, String> {
+        Ok(Json(
+            orchestrator::add_project_mcp(
+                request.project.as_deref(),
+                &request.mcp_id,
+                request.name.as_deref(),
+                &request.host,
+                request.port,
+                &request.path,
+                &request.transport,
+                request.auto_start,
+                request.activate,
+            )
+            .map_err(to_tool_error)?,
+        ))
     }
 
     #[tool(
@@ -362,7 +414,7 @@ impl UnrealFacade {
 
     #[tool(
         name = "get_instance_health",
-        description = "Inspect process and endpoint health for one Unreal instance or the active instance."
+        description = "Inspect process and MCP health for one Unreal instance or the active instance."
     )]
     async fn get_instance_health(
         &self,
@@ -376,33 +428,35 @@ impl UnrealFacade {
     }
 
     #[tool(
-        name = "ue_status",
-        description = "Check health of the active Unreal MCP endpoint."
+        name = "list_tools",
+        description = "List tools exposed by one configured MCP target, defaulting to the active project and mcp."
     )]
-    async fn ue_status(&self) -> Result<String, String> {
-        orchestrator::ue_status().await.map_err(to_tool_error)
-    }
-
-    #[tool(
-        name = "ue_list_tools",
-        description = "List tools exposed by the active Unreal MCP endpoint."
-    )]
-    async fn ue_list_tools(&self) -> Result<Json<ToolListResponse>, String> {
+    async fn list_tools(
+        &self,
+        Parameters(request): Parameters<McpSelectorRequest>,
+    ) -> Result<Json<ToolListResponse>, String> {
         Ok(Json(ToolListResponse {
-            tools: orchestrator::ue_list_tools().await.map_err(to_tool_error)?,
+            tools: orchestrator::list_tools(
+                request.project.as_deref(),
+                request.mcp.as_deref(),
+            )
+            .await
+            .map_err(to_tool_error)?,
         }))
     }
 
     #[tool(
-        name = "ue_call",
-        description = "Call a tool on the active Unreal MCP endpoint by name."
+        name = "call_tool",
+        description = "Call a tool on one configured MCP target, defaulting to the active project and mcp."
     )]
-    async fn ue_call(
+    async fn call_tool(
         &self,
-        Parameters(request): Parameters<UeCallRequest>,
-    ) -> Result<Json<orchestrator::UeToolEnvelope>, String> {
+        Parameters(request): Parameters<McpCallRequest>,
+    ) -> Result<Json<orchestrator::EndpointToolEnvelope>, String> {
         Ok(Json(
-            orchestrator::ue_call(
+            orchestrator::call_tool(
+                request.project.as_deref(),
+                request.mcp.as_deref(),
                 &request.tool_name,
                 as_object(request.arguments).map_err(to_tool_error)?,
             )
@@ -412,56 +466,18 @@ impl UnrealFacade {
     }
 
     #[tool(
-        name = "ue_run_python",
-        description = "Execute Python inside the active Unreal Editor through the MCP endpoint."
+        name = "sync_mcphub",
+        description = "Mirror one configured MCP target into the bundled generic MCPHub registry and refresh its catalog."
     )]
-    async fn ue_run_python(
+    async fn sync_mcphub(
         &self,
-        Parameters(request): Parameters<RunPythonRequest>,
-    ) -> Result<Json<orchestrator::UeToolEnvelope>, String> {
-        Ok(Json(
-            orchestrator::ue_run_python(&request.script)
-                .await
-                .map_err(to_tool_error)?,
-        ))
-    }
-
-    #[tool(
-        name = "ue_get_dispatch",
-        description = "Query UnrealCopilot dispatch domains or one domain on the active Unreal endpoint."
-    )]
-    async fn ue_get_dispatch(
-        &self,
-        Parameters(request): Parameters<DispatchRequest>,
-    ) -> Result<Json<orchestrator::UeToolEnvelope>, String> {
-        Ok(Json(
-            orchestrator::ue_get_dispatch(request.domain.as_deref())
-                .await
-                .map_err(to_tool_error)?,
-        ))
-    }
-
-    #[tool(
-        name = "ue_call_dispatch",
-        description = "Call one UnrealCopilot dispatch tool on the active Unreal endpoint."
-    )]
-    async fn ue_call_dispatch(
-        &self,
-        Parameters(request): Parameters<DispatchCallRequest>,
-    ) -> Result<Json<orchestrator::UeToolEnvelope>, String> {
-        Ok(Json(
-            orchestrator::ue_call_dispatch(&request.domain, &request.tool_name, request.arguments)
-                .await
-                .map_err(to_tool_error)?,
-        ))
-    }
-
-    #[tool(
-        name = "sync_mcphub_endpoint",
-        description = "Mirror the active Unreal endpoint into the bundled generic MCPHub registry and refresh its catalog."
-    )]
-    async fn sync_mcphub_endpoint(&self) -> Result<String, String> {
-        orchestrator::sync_mcphub_endpoint().map_err(to_tool_error)
+        Parameters(request): Parameters<McpSelectorRequest>,
+    ) -> Result<String, String> {
+        orchestrator::sync_mcphub(
+            request.project.as_deref(),
+            request.mcp.as_deref(),
+        )
+        .map_err(to_tool_error)
     }
 }
 
@@ -511,6 +527,14 @@ fn default_wait_seconds() -> u64 {
 
 fn default_session_limit() -> usize {
     50
+}
+
+fn default_mcp_path() -> String {
+    "/mcp".to_string()
+}
+
+fn default_mcp_transport() -> String {
+    "http".to_string()
 }
 
 fn as_object(value: Value) -> Result<Map<String, Value>> {

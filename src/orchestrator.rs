@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -11,9 +11,9 @@ use serde_json::{Map, Value};
 use tokio::process::Command;
 use tokio::time::sleep;
 
-use crate::config::{ConfigStore, ProjectEntry};
+use crate::config::{ConfigStore, ProjectEntry, ProjectMcpEndpoint};
 use crate::paths::{
-    UnrealProjectPaths, find_uproject, normalize_endpoint_id, read_copilot_transport,
+    UnrealProjectPaths, find_uproject, normalize_endpoint_id, read_project_mcp_endpoints,
     resolve_project_paths,
 };
 use crate::process::{is_process_alive, terminate_process};
@@ -22,13 +22,25 @@ use crate::submodule;
 use crate::ue_client::{EndpointHealth, ToolCallOutput, ToolDescriptor, UeClient};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ProjectEndpointSummary {
+    pub name: String,
+    #[serde(rename = "mcp_id", alias = "endpoint_id")]
+    pub endpoint_id: String,
+    #[serde(rename = "mcp_url", alias = "endpoint_url")]
+    pub endpoint_url: String,
+    pub transport: String,
+    pub auto_start: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectSummary {
     pub name: String,
     pub uproject_path: String,
     pub engine_root: String,
-    pub endpoint_id: String,
-    pub endpoint_url: String,
-    pub auto_start: bool,
+    #[serde(rename = "active_mcp", alias = "active_endpoint")]
+    pub active_endpoint: String,
+    #[serde(rename = "mcps", alias = "endpoints")]
+    pub endpoints: Vec<ProjectEndpointSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -46,6 +58,7 @@ pub struct HubStatus {
 pub struct LaunchResult {
     pub project_name: String,
     pub pid: u32,
+    #[serde(rename = "mcp_url", alias = "endpoint_url")]
     pub endpoint_url: String,
     pub stdout_log: String,
     pub stderr_log: String,
@@ -65,8 +78,12 @@ pub struct CrashReport {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct UeToolEnvelope {
+pub struct EndpointToolEnvelope {
+    pub project_name: String,
+    #[serde(rename = "mcp_id", alias = "endpoint_id")]
+    pub endpoint_id: String,
     pub instance_key: String,
+    #[serde(rename = "mcp_url", alias = "endpoint_url")]
     pub endpoint_url: String,
     pub output: ToolCallOutput,
 }
@@ -83,7 +100,9 @@ pub struct SessionReport {
 pub struct InstanceHealthReport {
     pub instance: InstanceState,
     pub process_alive: Option<bool>,
+    #[serde(rename = "mcp_health", alias = "endpoint_health")]
     pub endpoint_health: Option<EndpointHealth>,
+    #[serde(rename = "mcp_error", alias = "endpoint_error")]
     pub endpoint_error: Option<String>,
 }
 
@@ -110,35 +129,94 @@ pub async fn setup_project(
 ) -> Result<ProjectSummary> {
     let cwd = std::env::current_dir().context("failed to read current directory")?;
     let uproject = find_uproject(path.as_deref().unwrap_or(&cwd))?;
-    let paths = resolve_project_paths(&uproject, explicit_engine_root.as_deref())?;
-    let copilot = read_copilot_transport(&paths.project_dir)?;
-    let project_name = name.unwrap_or_else(|| paths.project_name.clone());
-    let endpoint_id = normalize_endpoint_id(&paths.project_name);
-    let endpoint_url = format!("http://{}:{}{}", copilot.host, copilot.port, copilot.path);
+    let project_name = name.unwrap_or_else(|| {
+        uproject
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("Unreal")
+            .to_string()
+    });
+    configure_project_from_uproject(&project_name, &uproject, explicit_engine_root.as_deref()).await
+}
 
+async fn configure_project_from_uproject(
+    project_name: &str,
+    uproject: &Path,
+    explicit_engine_root: Option<&Path>,
+) -> Result<ProjectSummary> {
+    let paths = resolve_project_paths(uproject, explicit_engine_root)?;
     let mut config = ConfigStore::load()?;
+    let mut discovered_endpoints =
+        read_project_mcp_endpoints(project_name, &paths.project_dir, config.discovery_strategies())?;
+    if discovered_endpoints.is_empty() {
+        discovered_endpoints.push(ProjectMcpEndpoint {
+            name: format!("{project_name} default"),
+            endpoint_id: normalize_endpoint_id(&paths.project_name),
+            host: "127.0.0.1".to_string(),
+            port: 19840,
+            path: "/mcp".to_string(),
+            transport: "http".to_string(),
+            auto_start: false,
+        });
+    }
+    let first_endpoint = discovered_endpoints
+        .first()
+        .cloned()
+        .ok_or_else(|| anyhow!("no MCPs discovered"))?;
     config.save_project(
-        project_name.clone(),
-        ProjectEntry {
-            uproject_path: uproject.display().to_string(),
-            engine_root: paths.engine_root.display().to_string(),
-            engine_association: paths.engine_association.clone(),
-            mcp_port: copilot.port,
-            mcp_host: copilot.host.clone(),
-            mcp_path: copilot.path.clone(),
-            endpoint_id: endpoint_id.clone(),
-            configured_at: now_iso_like(),
-        },
+        project_name.to_string(),
+        uproject.display().to_string(),
+        paths.engine_root.display().to_string(),
+        paths.engine_association.clone(),
+        first_endpoint,
+        now_iso_like(),
     )?;
+    for endpoint in discovered_endpoints.into_iter().skip(1) {
+        let _ = config.save_project_endpoint(project_name, endpoint, false)?;
+    }
 
-    Ok(ProjectSummary {
-        name: project_name,
-        uproject_path: uproject.display().to_string(),
-        engine_root: paths.engine_root.display().to_string(),
-        endpoint_id,
-        endpoint_url,
-        auto_start: copilot.auto_start,
-    })
+    Ok(get_project_config()?
+        .into_iter()
+        .find(|project| project.name == project_name)
+        .ok_or_else(|| anyhow!("failed to load saved project summary"))?)
+}
+
+pub async fn bind_project_from_current_dir() -> Result<Option<ProjectSummary>> {
+    let cwd = std::env::current_dir().context("failed to read current directory")?;
+    let uproject = match find_uproject(&cwd) {
+        Ok(path) => path,
+        Err(_) => return Ok(None),
+    };
+
+    let configured_name = {
+        let config = ConfigStore::load()?;
+        config
+            .list_projects()
+            .iter()
+            .find(|(_, entry)| same_path(Path::new(&entry.uproject_path), &uproject))
+            .map(|(name, _)| name.clone())
+    };
+
+    if let Some(project_name) = configured_name {
+        let _ = configure_project_from_uproject(&project_name, &uproject, None).await?;
+        let mut config = ConfigStore::load()?;
+        let _ = config.set_active_project(&project_name)?;
+        return Ok(
+            get_project_config()?
+                .into_iter()
+                .find(|project| project.name == project_name),
+        );
+    }
+
+    let project_name = uproject
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("Unreal")
+        .to_string();
+    let summary = configure_project_from_uproject(&project_name, &uproject, None).await?;
+    let mut config = ConfigStore::load()?;
+    let _ = config.set_active_project(&summary.name)?;
+    Ok(Some(summary))
 }
 
 pub fn get_project_config() -> Result<Vec<ProjectSummary>> {
@@ -146,17 +224,7 @@ pub fn get_project_config() -> Result<Vec<ProjectSummary>> {
     Ok(config
         .list_projects()
         .iter()
-        .map(|(name, entry)| ProjectSummary {
-            name: name.clone(),
-            uproject_path: entry.uproject_path.clone(),
-            engine_root: entry.engine_root.clone(),
-            endpoint_id: entry.endpoint_id.clone(),
-            endpoint_url: format!(
-                "http://{}:{}{}",
-                entry.mcp_host, entry.mcp_port, entry.mcp_path
-            ),
-            auto_start: true,
-        })
+        .map(|(name, entry)| build_project_summary(name, entry))
         .collect())
 }
 
@@ -166,7 +234,7 @@ pub fn hub_status() -> Result<HubStatus> {
     Ok(HubStatus {
         configured_projects: get_project_config()?,
         active_project: config.active_project_name().to_string(),
-        active_instance: state.get_active_instance().cloned(),
+        active_instance: preferred_active_instance(&config, &state).cloned(),
         known_instances: state.list_instances().into_iter().cloned().collect(),
         plugin_source_local: config.plugin_source_local().to_string(),
         plugin_source_repo: config.plugin_source_repo().to_string(),
@@ -178,7 +246,107 @@ pub fn hub_status() -> Result<HubStatus> {
 
 pub fn use_project(name: &str) -> Result<bool> {
     let mut config = ConfigStore::load()?;
-    config.set_active_project(name)
+    let switched = config.set_active_project(name)?;
+    if !switched {
+        return Ok(false);
+    }
+
+    let endpoint_id = config
+        .get_active_project()
+        .and_then(ProjectEntry::get_active_endpoint)
+        .map(|endpoint| endpoint.endpoint_id.clone());
+    if let Some(endpoint_id) = endpoint_id {
+        let mut state = StateStore::load()?;
+        if let Some(instance_key) = state
+            .list_instances()
+            .into_iter()
+            .find(|instance| instance.project_name == name && instance.endpoint_id == endpoint_id)
+            .map(|instance| instance.key.clone())
+        {
+            let _ = state.set_active_instance(&instance_key)?;
+        }
+    }
+    Ok(true)
+}
+
+pub fn use_mcp(mcp_id: &str) -> Result<bool> {
+    let mut config = ConfigStore::load()?;
+    let project_name = if !config.active_project_name().is_empty() {
+        config.active_project_name().to_string()
+    } else if config.list_projects().len() == 1 {
+        config.list_projects().keys().next().cloned().unwrap_or_default()
+    } else {
+        String::new()
+    };
+    if project_name.is_empty() {
+        return Ok(false);
+    }
+    let switched = config.set_active_endpoint(&project_name, mcp_id)?;
+    if !switched {
+        return Ok(false);
+    }
+
+    let mut state = StateStore::load()?;
+    if let Some(instance_key) = state
+        .list_instances()
+        .into_iter()
+        .find(|instance| instance.project_name == project_name && instance.endpoint_id == mcp_id)
+        .map(|instance| instance.key.clone())
+    {
+        let _ = state.set_active_instance(&instance_key)?;
+    }
+    Ok(true)
+}
+
+pub fn add_project_mcp(
+    project_name: Option<&str>,
+    mcp_id: &str,
+    mcp_name: Option<&str>,
+    host: &str,
+    port: u16,
+    path: &str,
+    transport: &str,
+    auto_start: bool,
+    activate: bool,
+) -> Result<ProjectSummary> {
+    let mut config = ConfigStore::load()?;
+    let project_name = project_name
+        .map(str::to_string)
+        .filter(|name| !name.trim().is_empty())
+        .or_else(|| {
+            (!config.active_project_name().is_empty()).then(|| config.active_project_name().to_string())
+        })
+        .or_else(|| {
+            (config.list_projects().len() == 1)
+                .then(|| config.list_projects().keys().next().cloned())
+                .flatten()
+        })
+        .ok_or_else(|| anyhow!("no target project configured"))?;
+
+    let endpoint = ProjectMcpEndpoint {
+        name: mcp_name
+            .map(str::to_string)
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| mcp_id.to_string()),
+        endpoint_id: mcp_id.to_string(),
+        host: host.to_string(),
+        port,
+        path: if path.starts_with('/') {
+            path.to_string()
+        } else {
+            format!("/{path}")
+        },
+        transport: transport.to_ascii_lowercase(),
+        auto_start,
+    };
+    if !config.save_project_endpoint(&project_name, endpoint, activate)? {
+        bail!("project '{}' not found", project_name);
+    }
+
+    get_project_config()?
+        .into_iter()
+        .find(|project| project.name == project_name)
+        .ok_or_else(|| anyhow!("failed to load saved project summary"))
 }
 
 pub async fn compile_project(
@@ -215,6 +383,7 @@ pub async fn compile_project(
 pub async fn launch_editor(wait_seconds: u64) -> Result<LaunchResult> {
     let paths = active_project_paths()?;
     let project = active_project_entry()?;
+    let endpoint = active_project_endpoint(&project)?;
     let logs_dir = paths.project_dir.join("Saved").join("Logs");
     fs::create_dir_all(&logs_dir)
         .with_context(|| format!("failed to create {}", logs_dir.display()))?;
@@ -242,7 +411,7 @@ pub async fn launch_editor(wait_seconds: u64) -> Result<LaunchResult> {
     let pid = child
         .id()
         .ok_or_else(|| anyhow!("failed to capture process id"))?;
-    let endpoint_url = project_endpoint_url(&project);
+    let endpoint_url = project_endpoint_url(&endpoint);
     let health = if wait_seconds > 0 {
         wait_for_health(&endpoint_url, wait_seconds).await.ok()
     } else {
@@ -250,14 +419,15 @@ pub async fn launch_editor(wait_seconds: u64) -> Result<LaunchResult> {
     };
 
     let mut state = StateStore::load()?;
-    let key = make_instance_key(&paths.project_name, project.mcp_port);
+    let key = make_instance_key(&paths.project_name, &endpoint.endpoint_id, endpoint.port);
     state.upsert_instance(InstanceState {
         key: key.clone(),
         project_name: paths.project_name.clone(),
+        endpoint_id: endpoint.endpoint_id.clone(),
         project_path: paths.uproject_path.display().to_string(),
         engine_root: paths.engine_root.display().to_string(),
-        host: project.mcp_host.clone(),
-        port: project.mcp_port,
+        host: endpoint.host.clone(),
+        port: endpoint.port,
         url: endpoint_url.clone(),
         pid: Some(pid),
         status: if health.is_some() {
@@ -287,7 +457,7 @@ pub async fn discover_instances() -> Result<DiscoveryResult> {
     let config = ConfigStore::load()?;
     let mut state = StateStore::load()?;
     let mut instances = Vec::new();
-    let candidates = build_discovery_candidates(&config, &state);
+    let candidates = build_discovery_candidates(&config);
 
     for candidate in candidates {
         if UeClient::health_check(&candidate.url).await.is_ok() {
@@ -295,6 +465,7 @@ pub async fn discover_instances() -> Result<DiscoveryResult> {
             state.upsert_instance(InstanceState {
                 key: candidate.instance_key.clone(),
                 project_name: candidate.project_name,
+                endpoint_id: candidate.endpoint_id,
                 project_path: candidate.project_path,
                 engine_root: candidate.engine_root,
                 host: candidate.host,
@@ -552,7 +723,7 @@ pub async fn get_instance_health(instance: Option<&str>) -> Result<InstanceHealt
             instance: health_instance,
             process_alive,
             endpoint_health: None,
-            endpoint_error: Some("instance has no reachable MCP endpoint".to_string()),
+            endpoint_error: Some("instance has no reachable MCP target".to_string()),
         });
     }
 
@@ -569,81 +740,53 @@ pub async fn get_instance_health(instance: Option<&str>) -> Result<InstanceHealt
     })
 }
 
-pub async fn ue_status() -> Result<String> {
-    let active = active_instance()?;
-    let health = UeClient::health_check(&active.url).await?;
-    Ok(format!(
-        "{} healthy={} tools={} latency_ms={}",
-        active.url, health.healthy, health.tool_count, health.latency_ms
-    ))
+pub async fn list_tools(
+    project_name: Option<&str>,
+    mcp_id: Option<&str>,
+) -> Result<Vec<ToolDescriptor>> {
+    let (_, _, endpoint) = resolve_project_and_endpoint(project_name, mcp_id)?;
+    UeClient::list_tools(&project_endpoint_url(&endpoint)).await
 }
 
-pub async fn ue_list_tools() -> Result<Vec<ToolDescriptor>> {
-    let active = active_instance()?;
-    UeClient::list_tools(&active.url).await
-}
-
-pub async fn ue_call(tool_name: &str, arguments: Map<String, Value>) -> Result<UeToolEnvelope> {
-    let active = active_instance()?;
+pub async fn call_tool(
+    project_name: Option<&str>,
+    mcp_id: Option<&str>,
+    tool_name: &str,
+    arguments: Map<String, Value>,
+) -> Result<EndpointToolEnvelope> {
+    let (project_name, _, endpoint) = resolve_project_and_endpoint(project_name, mcp_id)?;
+    let endpoint_url = project_endpoint_url(&endpoint);
+    let output = UeClient::call_tool(&endpoint_url, tool_name, arguments).await?;
     let mut state = StateStore::load()?;
-    let output = UeClient::call_tool(&active.url, tool_name, arguments).await?;
-    state.record_call(
-        &active.key,
-        ToolCallRecord {
-            timestamp: now_iso_like(),
-            tool_name: tool_name.to_string(),
-            success: output.success,
-            duration_ms: output.duration_ms,
-        },
-    )?;
-    Ok(UeToolEnvelope {
-        instance_key: active.key,
-        endpoint_url: active.url,
+    let instance_key = preferred_active_instance_for_endpoint(&state, &project_name, &endpoint.endpoint_id)
+        .map(|instance| instance.key.clone())
+        .unwrap_or_else(|| make_instance_key(&project_name, &endpoint.endpoint_id, endpoint.port));
+    if state.get_instance(&instance_key).is_some() {
+        state.record_call(
+            &instance_key,
+            ToolCallRecord {
+                timestamp: now_iso_like(),
+                tool_name: tool_name.to_string(),
+                success: output.success,
+                duration_ms: output.duration_ms,
+            },
+        )?;
+    }
+    Ok(EndpointToolEnvelope {
+        project_name,
+        endpoint_id: endpoint.endpoint_id,
+        instance_key,
+        endpoint_url,
         output,
     })
 }
 
-pub async fn ue_run_python(script: &str) -> Result<UeToolEnvelope> {
-    let mut args = Map::new();
-    args.insert("script".to_string(), Value::String(script.to_string()));
-    ue_call("run_python_script", args).await
-}
-
-pub async fn ue_get_dispatch(domain: Option<&str>) -> Result<UeToolEnvelope> {
-    let mut args = Map::new();
-    if let Some(domain) = domain {
-        args.insert("domain".to_string(), Value::String(domain.to_string()));
-    }
-    ue_call("get_dispatch", args).await
-}
-
-pub async fn ue_call_dispatch(
-    domain: &str,
-    tool_name: &str,
-    arguments: Value,
-) -> Result<UeToolEnvelope> {
-    let mut args = Map::new();
-    args.insert("domain".to_string(), Value::String(domain.to_string()));
-    args.insert(
-        "tool_name".to_string(),
-        Value::String(tool_name.to_string()),
-    );
-    args.insert("arguments".to_string(), arguments);
-    ue_call("call_dispatch_tool", args).await
-}
-
-pub fn sync_mcphub_endpoint() -> Result<String> {
-    let project = active_project_entry()?;
+pub fn sync_mcphub(project_name: Option<&str>, mcp_id: Option<&str>) -> Result<String> {
+    let (project_name, project, endpoint) = resolve_project_and_endpoint(project_name, mcp_id)?;
     submodule::sync_endpoint_with_mcphub(
-        &project.endpoint_id,
-        &project_endpoint_url(&project),
-        &format!(
-            "{} UnrealCopilot",
-            Path::new(&project.uproject_path)
-                .file_stem()
-                .and_then(|name| name.to_str())
-                .unwrap_or("Unreal")
-        ),
+        &endpoint.endpoint_id,
+        &project_endpoint_url(&endpoint),
+        &endpoint_display_name(&project_name, &project, &endpoint),
     )
 }
 
@@ -663,11 +806,50 @@ fn active_project_paths() -> Result<UnrealProjectPaths> {
     )
 }
 
-fn active_instance() -> Result<InstanceState> {
-    let state = StateStore::load()?;
-    state.get_active_instance().cloned().ok_or_else(|| {
-        anyhow!("no active UE instance; run launch_editor or discover_instances first")
-    })
+fn active_project_endpoint(project: &ProjectEntry) -> Result<ProjectMcpEndpoint> {
+    project
+        .get_active_endpoint()
+        .cloned()
+        .ok_or_else(|| anyhow!("no active MCP configured for project"))
+}
+
+fn resolve_project_and_endpoint(
+    project_name: Option<&str>,
+    endpoint_id: Option<&str>,
+) -> Result<(String, ProjectEntry, ProjectMcpEndpoint)> {
+    let config = ConfigStore::load()?;
+    let resolved_project_name = project_name
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            (!config.active_project_name().is_empty()).then(|| config.active_project_name().to_string())
+        })
+        .or_else(|| {
+            (config.list_projects().len() == 1)
+                .then(|| config.list_projects().keys().next().cloned())
+                .flatten()
+        })
+        .ok_or_else(|| anyhow!("no project selected and no active project configured"))?;
+    let project = config
+        .list_projects()
+        .get(&resolved_project_name)
+        .cloned()
+        .ok_or_else(|| anyhow!("project '{}' not found", resolved_project_name))?;
+    let endpoint = endpoint_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| {
+            project
+                .endpoints
+                .iter()
+                .find(|endpoint| endpoint.endpoint_id == value)
+                .cloned()
+        })
+        .or_else(|| project.get_active_endpoint().cloned())
+        .or_else(|| (project.endpoints.len() == 1).then(|| project.endpoints[0].clone()))
+        .ok_or_else(|| anyhow!("no mcp selected and no active mcp configured"))?;
+    Ok((resolved_project_name, project, endpoint))
 }
 
 fn resolve_instance_or_active(
@@ -680,17 +862,40 @@ fn resolve_instance_or_active(
             .cloned()
             .ok_or_else(|| anyhow!("instance '{identifier}' was not found"));
     }
-    state
-        .get_active_instance()
+    let config = ConfigStore::load()?;
+    preferred_active_instance(&config, state)
         .cloned()
         .ok_or_else(|| anyhow!("no active UE instance"))
 }
 
-fn project_endpoint_url(project: &ProjectEntry) -> String {
-    format!(
-        "http://{}:{}{}",
-        project.mcp_host, project.mcp_port, project.mcp_path
-    )
+fn preferred_active_instance<'a>(
+    config: &'a ConfigStore,
+    state: &'a StateStore,
+) -> Option<&'a InstanceState> {
+    let preferred = config
+        .get_active_project()
+        .and_then(ProjectEntry::get_active_endpoint)
+        .and_then(|endpoint| {
+            state.list_instances().into_iter().find(|instance| {
+                instance.project_name == config.active_project_name()
+                    && instance.endpoint_id == endpoint.endpoint_id
+            })
+        });
+    preferred.or_else(|| state.get_active_instance())
+}
+
+fn preferred_active_instance_for_endpoint<'a>(
+    state: &'a StateStore,
+    project_name: &str,
+    endpoint_id: &str,
+) -> Option<&'a InstanceState> {
+    state.list_instances().into_iter().find(|instance| {
+        instance.project_name == project_name && instance.endpoint_id == endpoint_id
+    })
+}
+
+fn project_endpoint_url(endpoint: &ProjectMcpEndpoint) -> String {
+    format!("http://{}:{}{}", endpoint.host, endpoint.port, endpoint.path)
 }
 
 async fn wait_for_health(url: &str, wait_seconds: u64) -> Result<EndpointHealth> {
@@ -705,7 +910,7 @@ async fn wait_for_health(url: &str, wait_seconds: u64) -> Result<EndpointHealth>
             }
         }
     }
-    Err(last_error.unwrap_or_else(|| anyhow!("endpoint never became healthy")))
+    Err(last_error.unwrap_or_else(|| anyhow!("MCP target never became healthy")))
 }
 
 fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
@@ -745,6 +950,7 @@ fn now_iso_like() -> String {
 struct DiscoveryCandidate {
     instance_key: String,
     project_name: String,
+    endpoint_id: String,
     project_path: String,
     engine_root: String,
     host: String,
@@ -752,80 +958,74 @@ struct DiscoveryCandidate {
     url: String,
 }
 
-fn build_discovery_candidates(config: &ConfigStore, state: &StateStore) -> Vec<DiscoveryCandidate> {
+fn build_project_summary(
+    name: &str,
+    entry: &ProjectEntry,
+) -> ProjectSummary {
+    ProjectSummary {
+        name: name.to_string(),
+        uproject_path: entry.uproject_path.to_string(),
+        engine_root: entry.engine_root.to_string(),
+        active_endpoint: entry.active_endpoint.clone(),
+        endpoints: entry
+            .endpoints
+            .iter()
+            .map(|endpoint| ProjectEndpointSummary {
+                name: endpoint.name.clone(),
+                endpoint_id: endpoint.endpoint_id.clone(),
+                endpoint_url: project_endpoint_url(endpoint),
+                transport: endpoint.transport.clone(),
+                auto_start: endpoint.auto_start,
+            })
+            .collect(),
+    }
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    match (fs::canonicalize(left), fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => left == right,
+    }
+}
+
+fn build_discovery_candidates(config: &ConfigStore) -> Vec<DiscoveryCandidate> {
     let mut candidates = BTreeMap::<String, DiscoveryCandidate>::new();
-    let mut host_paths = HashSet::<(String, String)>::new();
-    let mut ports = HashSet::<u16>::new();
 
     for (project_name, entry) in config.list_projects() {
-        if entry.mcp_port > 0 {
-            ports.insert(entry.mcp_port);
-        }
-        host_paths.insert((entry.mcp_host.clone(), entry.mcp_path.clone()));
-        add_discovery_candidate(
-            &mut candidates,
-            DiscoveryCandidate {
-                instance_key: make_instance_key(project_name, entry.mcp_port),
-                project_name: project_name.clone(),
-                project_path: entry.uproject_path.clone(),
-                engine_root: entry.engine_root.clone(),
-                host: entry.mcp_host.clone(),
-                port: entry.mcp_port,
-                url: format!(
-                    "http://{}:{}{}",
-                    entry.mcp_host, entry.mcp_port, entry.mcp_path
-                ),
-            },
-        );
-    }
-
-    for instance in state.list_instances() {
-        if !instance.host.is_empty() {
-            host_paths.insert((instance.host.clone(), extract_path_from_url(&instance.url)));
-        }
-        if instance.port > 0 {
-            ports.insert(instance.port);
-        }
-        if !instance.url.is_empty() {
+        for endpoint in &entry.endpoints {
             add_discovery_candidate(
                 &mut candidates,
                 DiscoveryCandidate {
-                    instance_key: instance.key.clone(),
-                    project_name: instance.project_name.clone(),
-                    project_path: instance.project_path.clone(),
-                    engine_root: instance.engine_root.clone(),
-                    host: instance.host.clone(),
-                    port: instance.port,
-                    url: instance.url.clone(),
-                },
-            );
-        }
-    }
-
-    for port in config.scan_ports() {
-        if *port > 0 {
-            ports.insert(*port);
-        }
-    }
-
-    for (host, path) in host_paths {
-        for port in &ports {
-            add_discovery_candidate(
-                &mut candidates,
-                DiscoveryCandidate {
-                    instance_key: make_instance_key("", *port),
-                    project_name: String::new(),
-                    project_path: String::new(),
-                    engine_root: String::new(),
-                    host: host.clone(),
-                    port: *port,
-                    url: format!("http://{}:{}{}", host, port, path),
+                    instance_key: make_instance_key(project_name, &endpoint.endpoint_id, endpoint.port),
+                    project_name: project_name.clone(),
+                    endpoint_id: endpoint.endpoint_id.clone(),
+                    project_path: entry.uproject_path.clone(),
+                    engine_root: entry.engine_root.clone(),
+                    host: endpoint.host.clone(),
+                    port: endpoint.port,
+                    url: project_endpoint_url(endpoint),
                 },
             );
         }
     }
 
     candidates.into_values().collect()
+}
+
+fn endpoint_display_name(
+    project_name: &str,
+    project: &ProjectEntry,
+    endpoint: &ProjectMcpEndpoint,
+) -> String {
+    let project_label = Path::new(&project.uproject_path)
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or(project_name);
+    if endpoint.name.trim().is_empty() {
+        format!("{project_label} {}", endpoint.endpoint_id)
+    } else {
+        format!("{project_label} {}", endpoint.name)
+    }
 }
 
 fn add_discovery_candidate(
@@ -838,20 +1038,5 @@ fn add_discovery_candidate(
         _ => {
             candidates.insert(candidate.url.clone(), candidate);
         }
-    }
-}
-
-fn extract_path_from_url(url: &str) -> String {
-    let Some((_, remainder)) = url.split_once("://") else {
-        return "/mcp".to_string();
-    };
-    let Some(path_start) = remainder.find('/') else {
-        return "/mcp".to_string();
-    };
-    let path = &remainder[path_start..];
-    if path.is_empty() {
-        "/mcp".to_string()
-    } else {
-        path.to_string()
     }
 }
