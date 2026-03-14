@@ -1,0 +1,24 @@
+[package]
+name = "unreal-mcp-orchestrator"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+axum = "0.8"
+clap = { version = "4.6", features = ["derive"] }
+dirs = "6.0"
+http = "1.4"
+rmcp = { version = "1.2.0", default-features = false, features = [
+    "client",
+    "macros",
+    "server",
+    "transport-io",
+    "transport-streamable-http-client-reqwest",
+    "transport-streamable-http-server",
+] }
+schemars = "1.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "process", "time", "net", "signal"] }
+tokio-util = "0.7"

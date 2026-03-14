@@ -1,0 +1,3 @@
+[submodule "vendor/MCPHub"]
+	path = vendor/MCPHub
+	url = https://github.com/syan2018/MCPHub.git
