@@ -254,10 +254,9 @@ impl UnrealFacade {
                 "compile",
                 orchestrator::compile_project(target, configuration).await,
             ),
-            EditorRequest::Launch { wait_seconds } => action_data(
-                "launch",
-                orchestrator::launch_editor(wait_seconds).await,
-            ),
+            EditorRequest::Launch { wait_seconds } => {
+                action_data("launch", orchestrator::launch_editor(wait_seconds).await)
+            }
             EditorRequest::Stop {
                 instance_key,
                 force,

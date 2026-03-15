@@ -34,7 +34,10 @@ pub fn is_process_alive(pid: u32) -> bool {
     }
 }
 
-pub fn find_process_pid_by_command_line(process_name: &str, command_line_fragment: &str) -> Option<u32> {
+pub fn find_process_pid_by_command_line(
+    process_name: &str,
+    command_line_fragment: &str,
+) -> Option<u32> {
     let process_name = process_name.trim();
     let command_line_fragment = command_line_fragment.trim();
     if process_name.is_empty() || command_line_fragment.is_empty() {
@@ -66,19 +69,24 @@ pub fn find_process_pid_by_command_line(process_name: &str, command_line_fragmen
 
     #[cfg(not(windows))]
     {
-        let Ok(output) = Command::new("ps").args(["-eo", "pid=,comm=,args="]).output() else {
+        let Ok(output) = Command::new("ps")
+            .args(["-eo", "pid=,comm=,args="])
+            .output()
+        else {
             return None;
         };
         if !output.status.success() {
             return None;
         }
 
-        String::from_utf8_lossy(&output.stdout).lines().find_map(|line| {
-            if !line.contains(process_name) || !line.contains(command_line_fragment) {
-                return None;
-            }
-            line.split_whitespace().next()?.parse::<u32>().ok()
-        })
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .find_map(|line| {
+                if !line.contains(process_name) || !line.contains(command_line_fragment) {
+                    return None;
+                }
+                line.split_whitespace().next()?.parse::<u32>().ok()
+            })
     }
 }
 

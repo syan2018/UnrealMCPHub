@@ -323,10 +323,7 @@ impl<'a> RelaxedValueParser<'a> {
                 self.cursor,
                 found as char
             ),
-            None => bail!(
-                "expected '{}' at end of input",
-                expected as char
-            ),
+            None => bail!("expected '{}' at end of input", expected as char),
         }
     }
 
@@ -432,7 +429,10 @@ mod tests {
         assert_eq!(
             parsed,
             Map::from_iter([
-                ("skill_name".to_string(), Value::String("cpp_editor_api".to_string())),
+                (
+                    "skill_name".to_string(),
+                    Value::String("cpp_editor_api".to_string())
+                ),
                 ("max_results".to_string(), Value::from(25)),
             ])
         );

@@ -44,7 +44,11 @@ pub struct ProjectEntry {
     pub engine_association: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty", rename = "mcps")]
     pub endpoints: Vec<ProjectMcpEndpoint>,
-    #[serde(default, skip_serializing_if = "String::is_empty", rename = "active_mcp")]
+    #[serde(
+        default,
+        skip_serializing_if = "String::is_empty",
+        rename = "active_mcp"
+    )]
     pub active_endpoint: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub configured_at: String,

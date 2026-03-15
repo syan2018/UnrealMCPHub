@@ -186,8 +186,12 @@ async fn configure_project_from_uproject(
 ) -> Result<ProjectSummary> {
     let paths = resolve_project_paths(uproject, explicit_engine_root)?;
     let mut config = ConfigStore::load()?;
-    let discovered_endpoints =
-        discover_or_default_project_endpoints(project_name, &paths.project_dir, &paths.project_name, &config)?;
+    let discovered_endpoints = discover_or_default_project_endpoints(
+        project_name,
+        &paths.project_dir,
+        &paths.project_name,
+        &config,
+    )?;
     let first_endpoint = discovered_endpoints
         .first()
         .cloned()
@@ -482,7 +486,11 @@ pub async fn launch_editor(wait_seconds: u64) -> Result<LaunchResult> {
         })?;
         state.update_instance_status(
             &key,
-            if health.is_some() { "online" } else { "starting" },
+            if health.is_some() {
+                "online"
+            } else {
+                "starting"
+            },
             Some(pid),
         )?;
         state.set_active_instance(&key)?;
@@ -531,7 +539,12 @@ pub async fn launch_editor(wait_seconds: u64) -> Result<LaunchResult> {
     } else {
         None
     };
-    let notes = launch_endpoint_notes(&paths.project_name, &endpoint, wait_seconds, health.is_some());
+    let notes = launch_endpoint_notes(
+        &paths.project_name,
+        &endpoint,
+        wait_seconds,
+        health.is_some(),
+    );
 
     let mut state = StateStore::load()?;
     let key = make_instance_key(&paths.project_name, &endpoint.endpoint_id, endpoint.port);
@@ -756,28 +769,19 @@ pub fn install_plugin() -> Result<String> {
     fs::create_dir_all(&plugins_dir)
         .with_context(|| format!("failed to create {}", plugins_dir.display()))?;
 
-    let source_root = if !config.plugin_source_local().is_empty() {
-        PathBuf::from(config.plugin_source_local())
+    let plugin_source = if !config.plugin_source_local().is_empty() {
+        resolve_plugin_source_root(Path::new(config.plugin_source_local())).ok_or_else(|| {
+            anyhow!(
+                "configured plugin source does not contain UnrealCopilot.uplugin: {}",
+                config.plugin_source_local()
+            )
+        })?
     } else {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .to_path_buf()
-    };
-    let direct = source_root.join("UnrealCopilot.uplugin");
-    let nested = source_root
-        .join("Plugins")
-        .join("UnrealCopilot")
-        .join("UnrealCopilot.uplugin");
-    let plugin_source = if direct.is_file() {
-        source_root.clone()
-    } else if nested.is_file() {
-        source_root.join("Plugins").join("UnrealCopilot")
-    } else {
-        bail!(
-            "could not locate UnrealCopilot plugin source under {}",
-            source_root.display()
-        );
+        detect_plugin_source_root().ok_or_else(|| {
+            anyhow!(
+                "could not locate UnrealCopilot plugin source relative to the current executable"
+            )
+        })?
     };
 
     let plugin_target = plugins_dir.join("UnrealCopilot");
@@ -1672,14 +1676,16 @@ fn reusable_instance_for_endpoint(
     uproject_path: &Path,
 ) -> Result<Option<InstanceState>> {
     let state = StateStore::load()?;
-    Ok(preferred_active_instance_for_endpoint(&state, project_name, &endpoint.endpoint_id)
-        .filter(|instance| {
-            instance.port == endpoint.port
-                && instance.host == endpoint.host
-                && same_path(Path::new(&instance.project_path), uproject_path)
-                && instance.pid.map(is_process_alive).unwrap_or(false)
-        })
-        .cloned())
+    Ok(
+        preferred_active_instance_for_endpoint(&state, project_name, &endpoint.endpoint_id)
+            .filter(|instance| {
+                instance.port == endpoint.port
+                    && instance.host == endpoint.host
+                    && same_path(Path::new(&instance.project_path), uproject_path)
+                    && instance.pid.map(is_process_alive).unwrap_or(false)
+            })
+            .cloned(),
+    )
 }
 
 fn existing_editor_pid_for_launch(
@@ -1807,6 +1813,30 @@ fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn detect_plugin_source_root() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .and_then(|dir| {
+            dir.ancestors()
+                .find_map(|candidate| resolve_plugin_source_root(candidate))
+        })
+}
+
+fn resolve_plugin_source_root(candidate: &Path) -> Option<PathBuf> {
+    if candidate.join("UnrealCopilot.uplugin").is_file() {
+        return Some(candidate.to_path_buf());
+    }
+
+    let nested = candidate
+        .join("Plugins")
+        .join("UnrealCopilot")
+        .join("UnrealCopilot.uplugin");
+    nested
+        .is_file()
+        .then(|| candidate.join("Plugins").join("UnrealCopilot"))
 }
 
 fn now_iso_like() -> String {
