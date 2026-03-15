@@ -436,12 +436,9 @@ impl UnrealFacade {
         Parameters(request): Parameters<McpSelectorRequest>,
     ) -> Result<Json<ToolListResponse>, String> {
         Ok(Json(ToolListResponse {
-            tools: orchestrator::list_tools(
-                request.project.as_deref(),
-                request.mcp.as_deref(),
-            )
-            .await
-            .map_err(to_tool_error)?,
+            tools: orchestrator::list_tools(request.project.as_deref(), request.mcp.as_deref())
+                .await
+                .map_err(to_tool_error)?,
         }))
     }
 
@@ -473,11 +470,8 @@ impl UnrealFacade {
         &self,
         Parameters(request): Parameters<McpSelectorRequest>,
     ) -> Result<String, String> {
-        orchestrator::sync_mcphub(
-            request.project.as_deref(),
-            request.mcp.as_deref(),
-        )
-        .map_err(to_tool_error)
+        orchestrator::sync_mcphub(request.project.as_deref(), request.mcp.as_deref())
+            .map_err(to_tool_error)
     }
 }
 

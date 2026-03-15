@@ -170,7 +170,8 @@ impl ConfigStore {
             AppConfig::default()
         };
         if data.discovery_strategies.is_empty() {
-            data.discovery_strategies.push(default_unrealcopilot_strategy());
+            data.discovery_strategies
+                .push(default_unrealcopilot_strategy());
         }
         for entry in data.projects.values_mut() {
             entry.normalize();

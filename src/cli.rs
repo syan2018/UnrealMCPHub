@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+use std::fs;
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -22,6 +24,9 @@ enum Command {
     ListTools(ListToolsArgs),
     CallTool(CallToolArgs),
     Compile(CompileArgs),
+    #[command(
+        about = "Launch or reuse the active Unreal Editor and wait for its embedded MCP to become healthy."
+    )]
     Launch(LaunchArgs),
     Discover,
     Health(HealthArgs),
@@ -36,6 +41,8 @@ enum Command {
     SetPluginSource(SetPluginSourceArgs),
     CrashReport,
     SyncMcphub(SyncMcphubArgs),
+    #[command(about = "Run a live UE-backed verification pass against the active project.")]
+    VerifyUe(VerifyUeArgs),
 }
 
 #[derive(Debug, Args)]
@@ -89,7 +96,11 @@ struct CallToolArgs {
 
 #[derive(Debug, Args)]
 struct LaunchArgs {
-    #[arg(long, default_value_t = 180)]
+    #[arg(
+        long,
+        default_value_t = 180,
+        help = "Maximum seconds to wait for the embedded MCP endpoint to become healthy"
+    )]
     wait_seconds: u64,
 }
 
@@ -177,6 +188,105 @@ struct SyncMcphubArgs {
     mcp: Option<String>,
 }
 
+#[derive(Debug, Args)]
+struct VerifyUeArgs {
+    #[arg(
+        long,
+        default_value_t = 180,
+        help = "Maximum seconds to wait for the embedded MCP endpoint to become healthy before live checks start"
+    )]
+    wait_seconds: u64,
+    #[arg(long, help = "Compile the active editor target before verification")]
+    compile: bool,
+    #[arg(
+        long,
+        help = "Stop the editor after verification; falls back to a forced stop on Windows if graceful shutdown fails"
+    )]
+    stop_editor: bool,
+    #[arg(
+        long,
+        help = "Write the full JSON report to a file and print a short completion summary to stdout"
+    )]
+    output: Option<PathBuf>,
+    #[arg(
+        long,
+        help = "Print a concise human-readable summary instead of the full JSON report"
+    )]
+    summary: bool,
+}
+
+fn render_verify_summary(
+    report: &orchestrator::VerifyUeReport,
+    output_path: Option<&PathBuf>,
+) -> String {
+    let mut out = String::new();
+    let passed = report.checks.iter().filter(|check| check.passed).count();
+    let failed = report.checks.len().saturating_sub(passed);
+    let _ = writeln!(
+        out,
+        "verify-ue: success={} project={} checks={}/{}",
+        report.overall_success,
+        report.project_name,
+        passed,
+        report.checks.len()
+    );
+    let _ = writeln!(out, "endpoint: {}", report.endpoint_url);
+    let _ = writeln!(out, "wait_seconds: {}", report.wait_seconds);
+
+    if let Some(launch) = &report.launch {
+        let _ = writeln!(out, "editor: launched pid={}", launch.pid);
+    } else if let Some(health) = &report.health {
+        let pid = health.instance.pid.unwrap_or_default();
+        let _ = writeln!(out, "editor: reused pid={}", pid);
+    }
+
+    if let Some(stop) = &report.stop {
+        let _ = writeln!(
+            out,
+            "stop_editor: stopped={} force={}",
+            stop.stopped, stop.force
+        );
+    }
+
+    if !report.tool_names.is_empty() {
+        let _ = writeln!(out, "tools: {}", report.tool_names.join(", "));
+    }
+
+    let samples = [
+        ("cpp_header", report.samples.cpp_header.as_deref()),
+        ("cpp_symbol", report.samples.cpp_symbol.as_deref()),
+        ("blueprint_asset", report.samples.blueprint_asset.as_deref()),
+        ("skill_name", report.samples.skill_name.as_deref()),
+    ];
+    for (label, value) in samples {
+        if let Some(value) = value {
+            let _ = writeln!(out, "sample.{label}: {value}");
+        }
+    }
+
+    if failed > 0 {
+        let _ = writeln!(out, "failed_checks:");
+        for check in report.checks.iter().filter(|check| !check.passed).take(8) {
+            let _ = writeln!(out, "  - {}: {}", check.name, check.summary);
+        }
+    } else {
+        let _ = writeln!(out, "failed_checks: none");
+    }
+
+    if !report.notes.is_empty() {
+        let _ = writeln!(out, "notes:");
+        for note in report.notes.iter().take(6) {
+            let _ = writeln!(out, "  - {note}");
+        }
+    }
+
+    if let Some(path) = output_path {
+        let _ = writeln!(out, "report: {}", path.display());
+    }
+
+    out.trim_end().to_string()
+}
+
 pub async fn run() -> Result<()> {
     let cli = Cli::parse();
     if let Err(error) = orchestrator::bind_project_from_current_dir().await {
@@ -201,7 +311,8 @@ pub async fn run() -> Result<()> {
             Ok(())
         }
         Command::ListTools(args) => {
-            let tools = orchestrator::list_tools(args.project.as_deref(), args.mcp.as_deref()).await?;
+            let tools =
+                orchestrator::list_tools(args.project.as_deref(), args.mcp.as_deref()).await?;
             if args.json {
                 println!("{}", serde_json::to_string_pretty(&tools)?);
             } else {
@@ -220,7 +331,9 @@ pub async fn run() -> Result<()> {
                 match arguments {
                     serde_json::Value::Object(map) => map,
                     serde_json::Value::Null => serde_json::Map::new(),
-                    other => anyhow::bail!("expected JSON object for --arguments-json, got {other}"),
+                    other => {
+                        anyhow::bail!("expected JSON object for --arguments-json, got {other}")
+                    }
                 },
             )
             .await?;
@@ -317,11 +430,28 @@ pub async fn run() -> Result<()> {
         Command::SyncMcphub(args) => {
             println!(
                 "{}",
-                orchestrator::sync_mcphub(
-                    args.project.as_deref(),
-                    args.mcp.as_deref()
-                )?
+                orchestrator::sync_mcphub(args.project.as_deref(), args.mcp.as_deref())?
             );
+            Ok(())
+        }
+        Command::VerifyUe(args) => {
+            let report =
+                orchestrator::verify_ue(args.wait_seconds, args.compile, args.stop_editor).await?;
+            let rendered = serde_json::to_string_pretty(&report)?;
+            let summary = render_verify_summary(&report, args.output.as_ref());
+            if let Some(path) = args.output {
+                if let Some(parent) = path.parent() {
+                    if !parent.as_os_str().is_empty() {
+                        fs::create_dir_all(parent)?;
+                    }
+                }
+                fs::write(&path, rendered.as_bytes())?;
+                println!("{summary}");
+            } else if args.summary {
+                println!("{summary}");
+            } else {
+                println!("{rendered}");
+            }
             Ok(())
         }
     }
