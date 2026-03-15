@@ -59,6 +59,72 @@
 - 通过 `list-tools`、`call-tool`、`sync-mcphub` 提供标准 MCP 转发
 - `sync-mcphub`，将当前活动 Unreal MCP 同步到 bundled `MCPHub`
 
+这个项目目前仍处于 pre-release 阶段，所以持久化配置和状态只支持当前这套规范字段名，
+不会为旧字段别名保留兼容层。
+
+## Discovery Strategies
+
+`discovery_strategies` 是有意暴露给用户的配置扩展面。现在默认配置会把内置
+strategies 直接写入 `~/.unreal-mcphub/config.json`，方便用户照着改，接入自己的
+MCP 插件。
+
+这里的设计原则是：
+
+- project 记录保持通用，只保存 `mcps`、`active_mcp` 以及 endpoint 的基础信息
+- 插件相关的发现逻辑放进 `discovery_strategies`
+
+这样扩展新插件时，不需要把 UnrealCopilot 专属字段塞进每个 project 配置里。
+
+示例：
+
+```json
+{
+  "projects": {},
+  "active_project": "",
+  "discovery_strategies": [
+    {
+      "name": "unrealcopilot",
+      "config_files": [
+        "Config/DefaultEditorPerProjectUserSettings.ini",
+        "Saved/Config/WindowsEditor/EditorPerProjectUserSettings.ini"
+      ],
+      "section": "/Script/UnrealCopilot.UnrealCopilotSettings",
+      "host_key": "McpHost",
+      "port_key": "McpPort",
+      "path_key": "McpPath",
+      "transport_key": "Transport",
+      "auto_start_key": "bAutoStartMcpServer",
+      "default_port": 19840
+    },
+    {
+      "name": "remote-mcp",
+      "config_files": [
+        "Config/DefaultEditorPerProjectUserSettings.ini",
+        "Saved/Config/WindowsEditor/EditorPerProjectUserSettings.ini"
+      ],
+      "section": "/Script/RemoteMCP.MCPSetting",
+      "enable_key": "bEnable",
+      "port_key": "Port",
+      "auto_start_key": "bAutoStart",
+      "default_port": 8422
+    }
+  ]
+}
+```
+
+如果要接入别的插件 MCP，就新增一个 strategy block，指向它自己的配置文件和键名。
+这些字段一般表示：
+
+- `config_files`: 按顺序扫描的 project 相对路径配置文件
+- `section`: 包含 MCP 设置的 INI section
+- `enable_key`: 可选的布尔开关键；如果存在且为 false，则该 endpoint 不参与发现
+- `*_key`: 可选的字段名，用于从该 section 读取值
+- `default_port`: 在没读到插件自定义端口前使用的默认端口
+
+Host 默认就是 `127.0.0.1`，路径默认就是 `/mcp`，transport 默认就是 `http`，
+auto-start 默认就是 `false`。所以这些默认值不需要再单独加配置项，只有插件真的暴露了
+可读取的覆盖字段时，才需要在 strategy 里写对应的 `*_key`。
+
 ## 仍未完成
 
 - 更丰富的插件专属 discovery strategy，而不只是一条默认 UnrealCopilot 策略
@@ -92,10 +158,17 @@ target\debug\unreal-mcphub.exe setup "D:\Projects\Games\Unreal Projects\LyraStar
 ```
 
 如果在某个 Unreal 工程目录内启动，UnrealMCPHub 也会在执行命令前自动尝试绑定
-当前 project。
+当前 project。如果这个 project 已经存在于 `~/.unreal-mcphub/config.json` 中，
+现在会优先复用已保存的绑定信息，只有在探测到引擎路径或 MCP endpoint 配置发生变化时
+才会刷新配置。
 在 Windows PowerShell 下，`call-tool --arguments-json` 现在同时兼容严格 JSON
 和 PowerShell 传给原生 exe 时常见的“去引号对象”形式，但传非空参数时仍建议优先
 使用 `ConvertTo-Json -Compress`，可读性和稳定性都更好。
+
+对于嵌入在 Unreal 插件里的 MCP，`launch` 和 `verify-ue` 只能在 endpoint 实际启动后
+才能连通。如果发现到的 endpoint 显示 `auto_start=false`，那就表示 UnrealMCPHub
+虽然可以拉起编辑器，但不能替插件把 MCP 服务自动开起来。这种情况下，需要在 Unreal
+里开启插件 MCP 的自动启动，或者在 Editor 打开后手动启动 MCP 服务。
 
 给当前 active project 增加一个额外的 MCP：
 
@@ -152,6 +225,10 @@ target\debug\unreal-mcphub.exe status
 ```powershell
 target\debug\unreal-mcphub.exe launch --wait-seconds 180
 ```
+
+如果返回的 JSON 里出现 `health: null`，或者 note 中提示 `auto_start=false`，
+表示 Editor 已经启动，但在等待窗口内内嵌 endpoint 始终没有变成可连接状态。常见原因
+通常是插件未启用、MCP 服务未设置为自动启动，或者需要在 Editor 内手动打开。
 
 对当前 active project 执行一次真实 UE 回归验证：
 

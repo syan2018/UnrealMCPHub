@@ -20,8 +20,7 @@ pub struct UnrealProjectPaths {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveredProjectEndpoint {
-    pub endpoint: ProjectMcpEndpoint,
-    pub matched_strategy: bool,
+    pub endpoint: Option<ProjectMcpEndpoint>,
 }
 
 pub fn find_uproject(start: &Path) -> Result<PathBuf> {
@@ -114,8 +113,8 @@ pub fn read_project_mcp_endpoints(
     let mut endpoints = Vec::new();
     for strategy in strategies {
         let discovered = read_strategy_endpoint(project_name, project_dir, strategy)?;
-        if discovered.matched_strategy || strategy.always_include {
-            endpoints.push(discovered.endpoint);
+        if let Some(endpoint) = discovered.endpoint {
+            endpoints.push(endpoint);
         }
     }
     Ok(endpoints)
@@ -176,13 +175,14 @@ fn read_strategy_endpoint(
     let mut endpoint = ProjectMcpEndpoint {
         name: strategy.name.clone(),
         endpoint_id: normalize_strategy_endpoint_id(project_name, &strategy.name),
-        host: strategy.default_host.clone(),
+        host: "127.0.0.1".to_string(),
         port: strategy.default_port,
-        path: normalize_path(&strategy.default_path),
-        transport: normalize_transport(&strategy.default_transport),
-        auto_start: strategy.default_auto_start,
+        path: "/mcp".to_string(),
+        transport: "http".to_string(),
+        auto_start: false,
     };
-    let mut matched = false;
+    let mut found_section = false;
+    let mut enabled = strategy.enable_key.is_none();
 
     for relative in &strategy.config_files {
         let path = project_dir.join(relative);
@@ -198,7 +198,8 @@ fn read_strategy_endpoint(
             if trimmed.starts_with('[') && trimmed.ends_with(']') {
                 in_section = trimmed.eq_ignore_ascii_case(&format!("[{}]", strategy.section));
                 if in_section {
-                    matched = true;
+                    found_section = true;
+                    enabled = strategy.enable_key.is_none();
                 }
                 continue;
             }
@@ -208,23 +209,25 @@ fn read_strategy_endpoint(
             let Some((key, value)) = trimmed.split_once('=') else {
                 continue;
             };
-            matched = true;
             match key.trim() {
-                key if key.eq_ignore_ascii_case(&strategy.host_key) => {
+                key if matches_config_key(strategy.enable_key.as_deref(), key) => {
+                    enabled = parse_bool(value.trim());
+                }
+                key if matches_config_key(strategy.host_key.as_deref(), key) => {
                     endpoint.host = value_or_default(value.trim(), &endpoint.host).to_string();
                 }
-                key if key.eq_ignore_ascii_case(&strategy.port_key) => {
+                key if matches_config_key(strategy.port_key.as_deref(), key) => {
                     if let Ok(port) = value.trim().parse::<u16>() {
                         endpoint.port = port;
                     }
                 }
-                key if key.eq_ignore_ascii_case(&strategy.path_key) => {
+                key if matches_config_key(strategy.path_key.as_deref(), key) => {
                     endpoint.path = normalize_path(value.trim());
                 }
-                key if key.eq_ignore_ascii_case(&strategy.transport_key) => {
+                key if matches_config_key(strategy.transport_key.as_deref(), key) => {
                     endpoint.transport = normalize_transport(value.trim());
                 }
-                key if key.eq_ignore_ascii_case(&strategy.auto_start_key) => {
+                key if matches_config_key(strategy.auto_start_key.as_deref(), key) => {
                     endpoint.auto_start = parse_bool(value.trim());
                 }
                 _ => {}
@@ -233,9 +236,15 @@ fn read_strategy_endpoint(
     }
 
     Ok(DiscoveredProjectEndpoint {
-        endpoint,
-        matched_strategy: matched,
+        endpoint: (found_section && enabled).then_some(endpoint),
     })
+}
+
+fn matches_config_key(expected: Option<&str>, actual: &str) -> bool {
+    expected
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some_and(|expected| actual.eq_ignore_ascii_case(expected))
 }
 
 fn value_or_default<'a>(value: &'a str, fallback: &'a str) -> &'a str {

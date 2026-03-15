@@ -11,7 +11,7 @@ Use this skill when the task should be completed by running `UnrealMCPHub` comma
 
 - Prefer the built binary at `UnrealMCPHub\target\debug\unreal-mcphub.exe`.
 - If the binary is missing or stale after code changes, run `cargo build` in `UnrealMCPHub` first.
-- When the current working directory is already inside an Unreal project tree, rely on UnrealMCPHub's auto-bind behavior before adding extra selectors.
+- When the current working directory is already inside an Unreal project tree, rely on UnrealMCPHub's auto-bind behavior before adding extra selectors; it now reuses an existing saved binding and only refreshes it when the detected engine path or discovered MCP endpoints changed.
 - For the common single-project, single-MCP flow, omit `--project` and `--mcp`.
 - When `call-tool` is used, pass `--arguments-json` as a JSON object string.
 - In Windows PowerShell, prefer building non-empty `--arguments-json` values with `ConvertTo-Json -Compress`; this build also accepts the de-quoted object syntax PowerShell often forwards to native executables.
@@ -19,6 +19,7 @@ Use this skill when the task should be completed by running `UnrealMCPHub` comma
 - Prefer `verify-ue --summary` for interactive terminal checks, and `verify-ue --output <file>` when a full JSON report should be preserved.
 - `--wait-seconds` only controls how long UnrealMCPHub waits for the embedded MCP endpoint to become healthy; live verification steps can continue after that window.
 - On Windows, `stop` automatically falls back to a forced process-tree termination if a graceful stop leaves child processes behind.
+- If the active Unreal plugin endpoint is discovered with `auto_start=false`, treat `launch` or `verify-ue` failures to reach the endpoint as a likely plugin configuration issue first: the editor can start successfully while the embedded MCP stays offline until the plugin starts its server. Recommend enabling the plugin's MCP auto-start setting or starting the MCP manually inside Unreal.
 
 ## Primary Commands
 

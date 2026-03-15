@@ -27,7 +27,7 @@ pub struct ToolCallRecord {
 pub struct InstanceState {
     pub key: String,
     pub project_name: String,
-    #[serde(rename = "mcp_id", alias = "endpoint_id")]
+    #[serde(rename = "mcp_id")]
     pub endpoint_id: String,
     pub project_path: String,
     pub engine_root: String,

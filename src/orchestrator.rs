@@ -24,9 +24,9 @@ use crate::ue_client::{EndpointHealth, ToolCallOutput, ToolDescriptor, UeClient}
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectEndpointSummary {
     pub name: String,
-    #[serde(rename = "mcp_id", alias = "endpoint_id")]
+    #[serde(rename = "mcp_id")]
     pub endpoint_id: String,
-    #[serde(rename = "mcp_url", alias = "endpoint_url")]
+    #[serde(rename = "mcp_url")]
     pub endpoint_url: String,
     pub transport: String,
     pub auto_start: bool,
@@ -37,9 +37,9 @@ pub struct ProjectSummary {
     pub name: String,
     pub uproject_path: String,
     pub engine_root: String,
-    #[serde(rename = "active_mcp", alias = "active_endpoint")]
+    #[serde(rename = "active_mcp")]
     pub active_endpoint: String,
-    #[serde(rename = "mcps", alias = "endpoints")]
+    #[serde(rename = "mcps")]
     pub endpoints: Vec<ProjectEndpointSummary>,
 }
 
@@ -58,11 +58,13 @@ pub struct HubStatus {
 pub struct LaunchResult {
     pub project_name: String,
     pub pid: u32,
-    #[serde(rename = "mcp_url", alias = "endpoint_url")]
+    #[serde(rename = "mcp_url")]
     pub endpoint_url: String,
     pub stdout_log: String,
     pub stderr_log: String,
     pub health: Option<EndpointHealth>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -80,10 +82,10 @@ pub struct CrashReport {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EndpointToolEnvelope {
     pub project_name: String,
-    #[serde(rename = "mcp_id", alias = "endpoint_id")]
+    #[serde(rename = "mcp_id")]
     pub endpoint_id: String,
     pub instance_key: String,
-    #[serde(rename = "mcp_url", alias = "endpoint_url")]
+    #[serde(rename = "mcp_url")]
     pub endpoint_url: String,
     pub output: ToolCallOutput,
 }
@@ -100,9 +102,9 @@ pub struct SessionReport {
 pub struct InstanceHealthReport {
     pub instance: InstanceState,
     pub process_alive: Option<bool>,
-    #[serde(rename = "mcp_health", alias = "endpoint_health")]
+    #[serde(rename = "mcp_health")]
     pub endpoint_health: Option<EndpointHealth>,
-    #[serde(rename = "mcp_error", alias = "endpoint_error")]
+    #[serde(rename = "mcp_error")]
     pub endpoint_error: Option<String>,
 }
 
@@ -141,7 +143,7 @@ pub struct VerificationSamples {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct VerifyUeReport {
     pub project_name: String,
-    #[serde(rename = "mcp_url", alias = "endpoint_url")]
+    #[serde(rename = "mcp_url")]
     pub endpoint_url: String,
     pub wait_seconds: u64,
     pub compile_requested: bool,
@@ -182,22 +184,8 @@ async fn configure_project_from_uproject(
 ) -> Result<ProjectSummary> {
     let paths = resolve_project_paths(uproject, explicit_engine_root)?;
     let mut config = ConfigStore::load()?;
-    let mut discovered_endpoints = read_project_mcp_endpoints(
-        project_name,
-        &paths.project_dir,
-        config.discovery_strategies(),
-    )?;
-    if discovered_endpoints.is_empty() {
-        discovered_endpoints.push(ProjectMcpEndpoint {
-            name: format!("{project_name} default"),
-            endpoint_id: normalize_endpoint_id(&paths.project_name),
-            host: "127.0.0.1".to_string(),
-            port: 19840,
-            path: "/mcp".to_string(),
-            transport: "http".to_string(),
-            auto_start: false,
-        });
-    }
+    let discovered_endpoints =
+        discover_or_default_project_endpoints(project_name, &paths.project_dir, &paths.project_name, &config)?;
     let first_endpoint = discovered_endpoints
         .first()
         .cloned()
@@ -214,10 +202,7 @@ async fn configure_project_from_uproject(
         let _ = config.save_project_endpoint(project_name, endpoint, false)?;
     }
 
-    Ok(get_project_config()?
-        .into_iter()
-        .find(|project| project.name == project_name)
-        .ok_or_else(|| anyhow!("failed to load saved project summary"))?)
+    configured_project_summary(&config, project_name)
 }
 
 pub async fn bind_project_from_current_dir() -> Result<Option<ProjectSummary>> {
@@ -237,12 +222,21 @@ pub async fn bind_project_from_current_dir() -> Result<Option<ProjectSummary>> {
     };
 
     if let Some(project_name) = configured_name {
-        let _ = configure_project_from_uproject(&project_name, &uproject, None).await?;
+        let paths = resolve_project_paths(&uproject, None)?;
         let mut config = ConfigStore::load()?;
+        let should_refresh = config
+            .list_projects()
+            .get(&project_name)
+            .map(|entry| project_entry_needs_refresh(&project_name, entry, &paths, &config))
+            .transpose()?
+            .unwrap_or(true);
+
+        if should_refresh {
+            let _ = configure_project_from_uproject(&project_name, &uproject, None).await?;
+            config = ConfigStore::load()?;
+        }
         let _ = config.set_active_project(&project_name)?;
-        return Ok(get_project_config()?
-            .into_iter()
-            .find(|project| project.name == project_name));
+        return configured_project_summary(&config, &project_name).map(Some);
     }
 
     let project_name = uproject
@@ -386,10 +380,7 @@ pub fn add_project_mcp(
         bail!("project '{}' not found", project_name);
     }
 
-    get_project_config()?
-        .into_iter()
-        .find(|project| project.name == project_name)
-        .ok_or_else(|| anyhow!("failed to load saved project summary"))
+    configured_project_summary(&config, &project_name)
 }
 
 pub async fn compile_project(
@@ -474,6 +465,7 @@ pub async fn launch_editor(wait_seconds: u64) -> Result<LaunchResult> {
     } else {
         None
     };
+    let notes = launch_endpoint_notes(&paths.project_name, &endpoint, wait_seconds, health.is_some());
 
     let mut state = StateStore::load()?;
     let key = make_instance_key(&paths.project_name, &endpoint.endpoint_id, endpoint.port);
@@ -507,6 +499,7 @@ pub async fn launch_editor(wait_seconds: u64) -> Result<LaunchResult> {
         stdout_log: stdout_log.display().to_string(),
         stderr_log: stderr_log.display().to_string(),
         health,
+        notes,
     })
 }
 
@@ -889,6 +882,9 @@ pub async fn verify_ue(
     let endpoint_url = project_endpoint_url(&endpoint);
     let mut checks = Vec::new();
     let mut notes = Vec::new();
+    if let Some(note) = endpoint_manual_start_note(&paths.project_name, &endpoint) {
+        notes.push(note);
+    }
     let mut report = VerifyUeReport {
         project_name: paths.project_name.clone(),
         endpoint_url,
@@ -967,6 +963,7 @@ pub async fn verify_ue(
         match launch_editor(wait_seconds).await {
             Ok(result) => {
                 notes.push(format!("Launched Unreal Editor with PID {}.", result.pid));
+                notes.extend(result.notes.iter().cloned());
                 push_verification_check(
                     &mut checks,
                     "launch_editor",
@@ -1466,6 +1463,58 @@ fn active_project_endpoint(project: &ProjectEntry) -> Result<ProjectMcpEndpoint>
         .ok_or_else(|| anyhow!("no active MCP configured for project"))
 }
 
+fn configured_project_summary(config: &ConfigStore, project_name: &str) -> Result<ProjectSummary> {
+    let entry = config
+        .list_projects()
+        .get(project_name)
+        .ok_or_else(|| anyhow!("failed to load saved project summary"))?;
+    Ok(build_project_summary(project_name, entry))
+}
+
+fn discover_or_default_project_endpoints(
+    project_name: &str,
+    project_dir: &Path,
+    normalized_project_name: &str,
+    config: &ConfigStore,
+) -> Result<Vec<ProjectMcpEndpoint>> {
+    let mut discovered_endpoints =
+        read_project_mcp_endpoints(project_name, project_dir, config.discovery_strategies())?;
+    if discovered_endpoints.is_empty() {
+        discovered_endpoints.push(ProjectMcpEndpoint {
+            name: format!("{project_name} default"),
+            endpoint_id: normalize_endpoint_id(normalized_project_name),
+            host: "127.0.0.1".to_string(),
+            port: 19840,
+            path: "/mcp".to_string(),
+            transport: "http".to_string(),
+            auto_start: false,
+        });
+    }
+    Ok(discovered_endpoints)
+}
+
+fn project_entry_needs_refresh(
+    project_name: &str,
+    entry: &ProjectEntry,
+    paths: &UnrealProjectPaths,
+    config: &ConfigStore,
+) -> Result<bool> {
+    if !same_path(Path::new(&entry.uproject_path), &paths.uproject_path) {
+        return Ok(true);
+    }
+    if !same_path(Path::new(&entry.engine_root), &paths.engine_root) {
+        return Ok(true);
+    }
+
+    let discovered_endpoints = discover_or_default_project_endpoints(
+        project_name,
+        &paths.project_dir,
+        &paths.project_name,
+        config,
+    )?;
+    Ok(entry.endpoints != discovered_endpoints)
+}
+
 fn resolve_project_and_endpoint(
     project_name: Option<&str>,
     endpoint_id: Option<&str>,
@@ -1553,6 +1602,38 @@ fn project_endpoint_url(endpoint: &ProjectMcpEndpoint) -> String {
         "http://{}:{}{}",
         endpoint.host, endpoint.port, endpoint.path
     )
+}
+
+fn endpoint_manual_start_note(project_name: &str, endpoint: &ProjectMcpEndpoint) -> Option<String> {
+    if endpoint.auto_start {
+        None
+    } else {
+        Some(format!(
+            "Active MCP '{}' for project '{}' is configured with auto_start=false. UnrealMCPHub can launch the editor, but the embedded endpoint may stay offline until the Unreal plugin starts it. Enable UnrealCopilot auto-start in project settings or start the MCP server manually inside the editor.",
+            endpoint.endpoint_id, project_name
+        ))
+    }
+}
+
+fn launch_endpoint_notes(
+    project_name: &str,
+    endpoint: &ProjectMcpEndpoint,
+    wait_seconds: u64,
+    endpoint_became_healthy: bool,
+) -> Vec<String> {
+    let mut notes = Vec::new();
+    if let Some(note) = endpoint_manual_start_note(project_name, endpoint) {
+        notes.push(note);
+    }
+    if wait_seconds > 0 && !endpoint_became_healthy {
+        notes.push(format!(
+            "Timed out waiting up to {}s for '{}' at {}. If the editor is running but the endpoint is still offline, confirm the plugin is enabled and the MCP server is started for this project.",
+            wait_seconds,
+            endpoint.endpoint_id,
+            project_endpoint_url(endpoint)
+        ));
+    }
+    notes
 }
 
 async fn wait_for_health(url: &str, wait_seconds: u64) -> Result<EndpointHealth> {

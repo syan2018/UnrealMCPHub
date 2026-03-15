@@ -5,10 +5,10 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct ProjectMcpEndpoint {
     pub name: String,
-    #[serde(rename = "mcp_id", alias = "endpoint_id")]
+    #[serde(rename = "mcp_id")]
     pub endpoint_id: String,
     pub host: String,
     pub port: u16,
@@ -17,22 +17,24 @@ pub struct ProjectMcpEndpoint {
     pub auto_start: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EndpointDiscoveryStrategy {
     pub name: String,
     pub config_files: Vec<String>,
     pub section: String,
-    pub host_key: String,
-    pub port_key: String,
-    pub path_key: String,
-    pub transport_key: String,
-    pub auto_start_key: String,
-    pub default_host: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enable_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_start_key: Option<String>,
     pub default_port: u16,
-    pub default_path: String,
-    pub default_transport: String,
-    pub default_auto_start: bool,
-    pub always_include: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -40,28 +42,24 @@ pub struct ProjectEntry {
     pub uproject_path: String,
     pub engine_root: String,
     pub engine_association: String,
-    #[serde(default, rename = "mcps", alias = "endpoints")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty", rename = "mcps")]
     pub endpoints: Vec<ProjectMcpEndpoint>,
-    #[serde(default, rename = "active_mcp", alias = "active_endpoint")]
+    #[serde(default, skip_serializing_if = "String::is_empty", rename = "active_mcp")]
     pub active_endpoint: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub configured_at: String,
-    #[serde(default)]
-    pub mcp_port: u16,
-    #[serde(default)]
-    pub mcp_host: String,
-    #[serde(default)]
-    pub mcp_path: String,
-    #[serde(default, rename = "mcp_id", alias = "endpoint_id")]
-    pub endpoint_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub projects: BTreeMap<String, ProjectEntry>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub active_project: String,
     #[serde(default)]
     pub discovery_strategies: Vec<EndpointDiscoveryStrategy>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub plugin_source_local: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub plugin_source_repo: String,
 }
 
@@ -70,7 +68,7 @@ impl Default for AppConfig {
         Self {
             projects: BTreeMap::new(),
             active_project: String::new(),
-            discovery_strategies: vec![default_unrealcopilot_strategy()],
+            discovery_strategies: builtin_discovery_strategies(),
             plugin_source_local: String::new(),
             plugin_source_repo: String::new(),
         }
@@ -79,44 +77,10 @@ impl Default for AppConfig {
 
 impl ProjectEntry {
     pub fn normalize(&mut self) {
-        if self.endpoints.is_empty()
-            && (!self.endpoint_id.is_empty() || self.mcp_port > 0 || !self.mcp_host.is_empty())
-        {
-            self.endpoints.push(ProjectMcpEndpoint {
-                name: if self.endpoint_id.is_empty() {
-                    "default".to_string()
-                } else {
-                    self.endpoint_id.clone()
-                },
-                endpoint_id: self.endpoint_id.clone(),
-                host: if self.mcp_host.is_empty() {
-                    "127.0.0.1".to_string()
-                } else {
-                    self.mcp_host.clone()
-                },
-                port: self.mcp_port,
-                path: if self.mcp_path.is_empty() {
-                    "/mcp".to_string()
-                } else {
-                    self.mcp_path.clone()
-                },
-                transport: "http".to_string(),
-                auto_start: false,
-            });
-        }
-
-        if self.active_endpoint.is_empty() {
-            self.active_endpoint = self
-                .endpoints
-                .first()
-                .map(|endpoint| endpoint.endpoint_id.clone())
-                .unwrap_or_default();
-        }
         if let Some(active) = self.get_active_endpoint().cloned() {
-            self.mcp_port = active.port;
-            self.mcp_host = active.host;
-            self.mcp_path = active.path;
-            self.endpoint_id = active.endpoint_id;
+            self.active_endpoint = active.endpoint_id;
+        } else {
+            self.active_endpoint.clear();
         }
     }
 
@@ -139,18 +103,39 @@ fn default_unrealcopilot_strategy() -> EndpointDiscoveryStrategy {
             "Saved/Config/WindowsEditor/EditorPerProjectUserSettings.ini".to_string(),
         ],
         section: "/Script/UnrealCopilot.UnrealCopilotSettings".to_string(),
-        host_key: "McpHost".to_string(),
-        port_key: "McpPort".to_string(),
-        path_key: "McpPath".to_string(),
-        transport_key: "Transport".to_string(),
-        auto_start_key: "bAutoStartMcpServer".to_string(),
-        default_host: "127.0.0.1".to_string(),
+        enable_key: None,
+        host_key: Some("McpHost".to_string()),
+        port_key: Some("McpPort".to_string()),
+        path_key: Some("McpPath".to_string()),
+        transport_key: Some("Transport".to_string()),
+        auto_start_key: Some("bAutoStartMcpServer".to_string()),
         default_port: 19840,
-        default_path: "/mcp".to_string(),
-        default_transport: "http".to_string(),
-        default_auto_start: false,
-        always_include: true,
     }
+}
+
+fn default_remote_mcp_strategy() -> EndpointDiscoveryStrategy {
+    EndpointDiscoveryStrategy {
+        name: "remote-mcp".to_string(),
+        config_files: vec![
+            "Config/DefaultEditorPerProjectUserSettings.ini".to_string(),
+            "Saved/Config/WindowsEditor/EditorPerProjectUserSettings.ini".to_string(),
+        ],
+        section: "/Script/RemoteMCP.MCPSetting".to_string(),
+        enable_key: Some("bEnable".to_string()),
+        host_key: None,
+        port_key: Some("Port".to_string()),
+        path_key: None,
+        transport_key: None,
+        auto_start_key: Some("bAutoStart".to_string()),
+        default_port: 8422,
+    }
+}
+
+fn builtin_discovery_strategies() -> Vec<EndpointDiscoveryStrategy> {
+    vec![
+        default_unrealcopilot_strategy(),
+        default_remote_mcp_strategy(),
+    ]
 }
 
 #[derive(Debug)]
@@ -162,21 +147,26 @@ pub struct ConfigStore {
 impl ConfigStore {
     pub fn load() -> Result<Self> {
         let path = config_path();
-        let mut data = if path.is_file() {
+        let existed = path.is_file();
+        let mut should_persist = !existed;
+        let mut data = if existed {
             let raw = fs::read_to_string(&path)
                 .with_context(|| format!("failed to read {}", path.display()))?;
             serde_json::from_str(&raw).unwrap_or_default()
         } else {
             AppConfig::default()
         };
-        if data.discovery_strategies.is_empty() {
-            data.discovery_strategies
-                .push(default_unrealcopilot_strategy());
+        if merge_builtin_discovery_strategies(&mut data.discovery_strategies) {
+            should_persist = true;
         }
         for entry in data.projects.values_mut() {
             entry.normalize();
         }
-        Ok(Self { path, data })
+        let store = Self { path, data };
+        if should_persist {
+            store.save()?;
+        }
+        Ok(store)
     }
 
     pub fn save(&self) -> Result<()> {
@@ -215,10 +205,6 @@ impl ConfigStore {
         entry.engine_root = engine_root;
         entry.engine_association = engine_association;
         entry.configured_at = configured_at;
-        entry.mcp_port = endpoint.port;
-        entry.mcp_host = endpoint.host.clone();
-        entry.mcp_path = endpoint.path.clone();
-        entry.endpoint_id = endpoint.endpoint_id.clone();
         match entry
             .endpoints
             .iter_mut()
@@ -241,6 +227,9 @@ impl ConfigStore {
         if !self.data.projects.contains_key(name) {
             return Ok(false);
         }
+        if self.data.active_project == name {
+            return Ok(true);
+        }
         self.data.active_project = name.to_string();
         self.save()?;
         Ok(true)
@@ -256,6 +245,9 @@ impl ConfigStore {
             .any(|endpoint| endpoint.endpoint_id == endpoint_id)
         {
             return Ok(false);
+        }
+        if project.active_endpoint == endpoint_id {
+            return Ok(true);
         }
         project.active_endpoint = endpoint_id.to_string();
         project.normalize();
@@ -309,6 +301,21 @@ impl ConfigStore {
     pub fn discovery_strategies(&self) -> &[EndpointDiscoveryStrategy] {
         &self.data.discovery_strategies
     }
+}
+
+fn merge_builtin_discovery_strategies(strategies: &mut Vec<EndpointDiscoveryStrategy>) -> bool {
+    let mut changed = false;
+    for builtin in builtin_discovery_strategies() {
+        if strategies
+            .iter()
+            .any(|existing| existing.name == builtin.name)
+        {
+            continue;
+        }
+        strategies.push(builtin);
+        changed = true;
+    }
+    changed
 }
 
 pub fn base_dir() -> PathBuf {

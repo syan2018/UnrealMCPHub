@@ -71,6 +71,76 @@ Implemented in this first standalone slice:
 - `sync-mcphub` bridge that mirrors the active Unreal MCP into bundled
   generic `MCPHub` via `register-http` + `discover`
 
+This project is still pre-release, so the persisted config/state schema follows
+the current canonical field names only. Old field aliases are intentionally not
+supported.
+
+## Discovery Strategies
+
+`discovery_strategies` is part of the intended user-facing config surface. The
+default config now writes the built-in strategies into
+`~/.unreal-mcphub/config.json` so users can copy and adapt them for their own
+MCP plugins.
+
+The extensibility rule is:
+
+- keep project entries generic (`mcps`, `active_mcp`, endpoint host/port/path)
+- keep plugin-specific discovery details inside `discovery_strategies`
+
+That keeps `UnrealMCPHub` extensible without baking UnrealCopilot-specific
+fields into every project record.
+
+Example:
+
+```json
+{
+  "projects": {},
+  "active_project": "",
+  "discovery_strategies": [
+    {
+      "name": "unrealcopilot",
+      "config_files": [
+        "Config/DefaultEditorPerProjectUserSettings.ini",
+        "Saved/Config/WindowsEditor/EditorPerProjectUserSettings.ini"
+      ],
+      "section": "/Script/UnrealCopilot.UnrealCopilotSettings",
+      "host_key": "McpHost",
+      "port_key": "McpPort",
+      "path_key": "McpPath",
+      "transport_key": "Transport",
+      "auto_start_key": "bAutoStartMcpServer",
+      "default_port": 19840
+    },
+    {
+      "name": "remote-mcp",
+      "config_files": [
+        "Config/DefaultEditorPerProjectUserSettings.ini",
+        "Saved/Config/WindowsEditor/EditorPerProjectUserSettings.ini"
+      ],
+      "section": "/Script/RemoteMCP.MCPSetting",
+      "enable_key": "bEnable",
+      "port_key": "Port",
+      "auto_start_key": "bAutoStart",
+      "default_port": 8422
+    }
+  ]
+}
+```
+
+To integrate another plugin MCP, add another strategy block that points at that
+plugin's config files and keys. In most cases the fields mean:
+
+- `config_files`: project-relative config files to scan in order
+- `section`: INI section name that contains the MCP settings
+- `enable_key`: optional boolean gate; when present and false, the endpoint is
+  ignored
+- `*_key`: optional field names to read from that section
+- `default_port`: fallback port before a plugin-specific port override is found
+
+Host defaults to `127.0.0.1`, path defaults to `/mcp`, transport defaults to
+`http`, and auto-start defaults to `false`, so those do not need extra config
+keys unless a plugin exposes overrides that UnrealMCPHub should read.
+
 Not implemented yet:
 
 - richer plugin-specific discovery strategies beyond the default UnrealCopilot setup
@@ -105,10 +175,20 @@ target\debug\unreal-mcphub.exe setup "D:\Projects\Games\Unreal Projects\LyraStar
 
 When launched inside a directory that belongs to a UE project, UnrealMCPHub
 will also try to bind that project automatically before running the command.
+If that project is already present in `~/.unreal-mcphub/config.json`,
+UnrealMCPHub now reuses the saved binding and only refreshes it when the
+detected engine path or discovered MCP endpoints actually changed.
 On Windows PowerShell, `call-tool --arguments-json` now accepts both strict
 JSON and the de-quoted object syntax PowerShell often forwards to native
 executables, but `ConvertTo-Json -Compress` is still the clearest way to pass
 non-empty arguments.
+
+For embedded Unreal plugin MCPs, `launch` and `verify-ue` can only connect once
+the endpoint is actually running. If the discovered endpoint shows
+`auto_start=false`, UnrealMCPHub can still launch the editor, but it cannot
+make the plugin start its MCP server on your behalf. In that case, enable the
+plugin's MCP auto-start setting in Unreal or start the MCP server manually
+after the editor opens.
 
 Add another MCP under the active project:
 
@@ -166,6 +246,12 @@ Launch the editor and wait for MCP:
 ```powershell
 target\debug\unreal-mcphub.exe launch --wait-seconds 180
 ```
+
+If the returned JSON includes `health: null` or a note about `auto_start=false`,
+the editor launched but the embedded endpoint never became reachable during the
+wait window. That usually means the plugin is disabled, its MCP server is not
+set to auto-start, or the server needs to be started manually inside the
+editor.
 
 Run a live Unreal verification pass against the active project:
 
