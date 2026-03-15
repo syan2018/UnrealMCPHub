@@ -60,7 +60,7 @@ target\debug\unreal-mcphub.exe call-tool run_unreal_skill --arguments-json "$arg
 ## Avoid
 
 - Do not hand-write large nested JSON strings when PowerShell can build them.
-- Do not rely on `cmd /s /c` fallbacks.
+- Do not rely on extra shell-wrapper fallbacks.
 - Do not send unused `run_unreal_skill` fields "just in case".
 - Do not embed multiline Python directly in the command line when a temp file is
   simpler.
