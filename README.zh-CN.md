@@ -130,6 +130,28 @@ target\debug\unreal-mcphub.exe status
 target\debug\unreal-mcphub.exe launch --wait-seconds 180
 ```
 
+对当前 active project 执行一次真实 UE 回归验证：
+
+```powershell
+target\debug\unreal-mcphub.exe verify-ue --compile --wait-seconds 180
+```
+
+这个命令会直接连接真实的 Unreal Editor，等待内嵌 MCP ready，然后一次性检查
+暴露工具表面，并实际调用代表性的 C++、Blueprint、Asset、skill、session 与
+`sync-mcphub` 流程，输出结构化验证报告。`--wait-seconds` 只控制“等待编辑器内
+MCP 变为 healthy”的阶段，不是整条验证命令的总超时；后续真实工具调用仍会继续
+执行。Windows 下如果希望稳定落盘报告，优先使用：
+
+```powershell
+target\debug\unreal-mcphub.exe verify-ue --compile --wait-seconds 180 --output verify-ue-report.json
+```
+
+如果你只想在终端里看简洁结果，不想刷出完整 JSON，可以使用：
+
+```powershell
+target\debug\unreal-mcphub.exe verify-ue --compile --wait-seconds 180 --summary
+```
+
 发现可达实例：
 
 ```powershell
@@ -140,14 +162,14 @@ target\debug\unreal-mcphub.exe discover
 
 ```powershell
 target\debug\unreal-mcphub.exe health
-target\debug\unreal-mcphub.exe health LyraStarterGame:19840
+target\debug\unreal-mcphub.exe health <project>:<mcp-id>:<port>
 ```
 
 查看 session 快照：
 
 ```powershell
 target\debug\unreal-mcphub.exe session --scope full --limit 20
-target\debug\unreal-mcphub.exe session LyraStarterGame:19840 --scope history --limit 50
+target\debug\unreal-mcphub.exe session <project>:<mcp-id>:<port> --scope history --limit 50
 ```
 
 把当前活动 Unreal MCP 同步到 bundled `MCPHub`：

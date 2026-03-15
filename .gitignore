@@ -1,1 +1,4 @@
 /target
+/cpp-usage-report.json
+/run-skill-report.json
+/verify-ue-report*.json

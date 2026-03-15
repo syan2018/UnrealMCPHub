@@ -142,6 +142,30 @@ Launch the editor and wait for MCP:
 target\debug\unreal-mcphub.exe launch --wait-seconds 180
 ```
 
+Run a live Unreal verification pass against the active project:
+
+```powershell
+target\debug\unreal-mcphub.exe verify-ue --compile --wait-seconds 180
+```
+
+This uses a real Unreal Editor instance, waits for the embedded MCP to become
+healthy, verifies the exposed tool surface, and exercises representative C++,
+Blueprint, asset, skill, session, and `sync-mcphub` flows in one report.
+`--wait-seconds` only applies to the "wait until the embedded MCP is healthy"
+phase; the full verification can still take longer while live tool calls run.
+On Windows, prefer writing the report directly instead of piping large JSON
+through PowerShell:
+
+```powershell
+target\debug\unreal-mcphub.exe verify-ue --compile --wait-seconds 180 --output verify-ue-report.json
+```
+
+If you only want a concise terminal summary instead of the full JSON payload, use:
+
+```powershell
+target\debug\unreal-mcphub.exe verify-ue --compile --wait-seconds 180 --summary
+```
+
 Discover reachable instances:
 
 ```powershell
@@ -152,14 +176,14 @@ Inspect one instance's health:
 
 ```powershell
 target\debug\unreal-mcphub.exe health
-target\debug\unreal-mcphub.exe health LyraStarterGame:19840
+target\debug\unreal-mcphub.exe health <project>:<mcp-id>:<port>
 ```
 
 Inspect the persisted session snapshot:
 
 ```powershell
 target\debug\unreal-mcphub.exe session --scope full --limit 20
-target\debug\unreal-mcphub.exe session LyraStarterGame:19840 --scope history --limit 50
+target\debug\unreal-mcphub.exe session <project>:<mcp-id>:<port> --scope history --limit 50
 ```
 
 Mirror the active Unreal MCP into bundled `MCPHub`:
@@ -225,4 +249,5 @@ target\debug\unreal-mcphub.exe setup "D:\Projects\Games\Unreal Projects\LyraStar
 target\debug\unreal-mcphub.exe launch --wait-seconds 180
 target\debug\unreal-mcphub.exe status
 target\debug\unreal-mcphub.exe sync-mcphub
+target\debug\unreal-mcphub.exe verify-ue --compile --wait-seconds 180 --summary
 ```

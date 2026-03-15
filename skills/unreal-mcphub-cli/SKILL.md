@@ -14,6 +14,8 @@ Use this skill when the task should be completed by running `UnrealMCPHub` comma
 - When the current working directory is already inside an Unreal project tree, rely on UnrealMCPHub's auto-bind behavior before adding extra selectors.
 - For the common single-project, single-MCP flow, omit `--project` and `--mcp`.
 - When `call-tool` is used, pass `--arguments-json` as a JSON object string.
+- Prefer `verify-ue --summary` for interactive terminal checks, and `verify-ue --output <file>` when a full JSON report should be preserved.
+- `--wait-seconds` only controls how long UnrealMCPHub waits for the embedded MCP endpoint to become healthy; live verification steps can continue after that window.
 
 ## Primary Commands
 
@@ -23,11 +25,16 @@ Use this skill when the task should be completed by running `UnrealMCPHub` comma
   `target\debug\unreal-mcphub.exe status`
 - Launch the editor and wait for MCP readiness:
   `target\debug\unreal-mcphub.exe launch --wait-seconds 180`
+- Run a full live UE verification pass with a concise terminal summary:
+  `target\debug\unreal-mcphub.exe verify-ue --compile --wait-seconds 180 --summary`
+- Run a full live UE verification pass and save the full report:
+  `target\debug\unreal-mcphub.exe verify-ue --compile --wait-seconds 180 --output verify-ue-report.json`
 - Discover configured Unreal instances:
   `target\debug\unreal-mcphub.exe discover`
 - Inspect the active instance or one explicit instance:
   `target\debug\unreal-mcphub.exe health`
   `target\debug\unreal-mcphub.exe session --scope full --limit 20`
+- Explicit instance keys use the shape `<project>:<mcp-id>:<port>` and are best copied from `discover`.
 - Switch the active project or active MCP:
   `target\debug\unreal-mcphub.exe use-project <project-name>`
   `target\debug\unreal-mcphub.exe use-mcp <mcp-id>`
@@ -44,4 +51,5 @@ Use this skill when the task should be completed by running `UnrealMCPHub` comma
 1. Confirm whether the task is lifecycle management, MCP inspection, or tool forwarding.
 2. Choose the narrowest CLI command that solves it.
 3. If selectors are required, prefer `--project` and `--mcp`; otherwise let the active defaults resolve them.
-4. Report the concrete project name, MCP id, instance key, URL, or tool name that was used so the result is easy to audit.
+4. For interactive verification, prefer concise terminal output first; only emit the full JSON when the user explicitly needs raw report details.
+5. Report the concrete project name, MCP id, instance key, URL, or tool name that was used so the result is easy to audit.

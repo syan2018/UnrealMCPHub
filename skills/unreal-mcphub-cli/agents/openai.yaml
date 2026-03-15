@@ -1,4 +1,4 @@
 interface:
   display_name: "UnrealMCPHub CLI"
   short_description: "Operate UnrealMCPHub through its CLI"
-  default_prompt: "Use $unreal-mcphub-cli to bind a project, manage MCPs, inspect UnrealMCPHub status, forward tools, or sync the active MCP into bundled MCPHub."
+  default_prompt: "Use $unreal-mcphub-cli to bind a project, launch or verify a live Unreal Editor session, manage MCPs, inspect status or health, forward tools, or sync the active MCP into bundled MCPHub."
