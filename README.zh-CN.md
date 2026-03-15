@@ -93,6 +93,9 @@ target\debug\unreal-mcphub.exe setup "D:\Projects\Games\Unreal Projects\LyraStar
 
 如果在某个 Unreal 工程目录内启动，UnrealMCPHub 也会在执行命令前自动尝试绑定
 当前 project。
+在 Windows PowerShell 下，`call-tool --arguments-json` 现在同时兼容严格 JSON
+和 PowerShell 传给原生 exe 时常见的“去引号对象”形式，但传非空参数时仍建议优先
+使用 `ConvertTo-Json -Compress`，可读性和稳定性都更好。
 
 给当前 active project 增加一个额外的 MCP：
 
@@ -116,6 +119,26 @@ target\debug\unreal-mcphub.exe list-tools
 
 ```powershell
 target\debug\unreal-mcphub.exe call-tool get_dispatch --arguments-json "{}"
+```
+
+在 PowerShell 中调用带参数的工具：
+
+```powershell
+$args = @{ skill_name = "cpp_editor_api"; path = "docs/overview.md" } | ConvertTo-Json -Compress
+target\debug\unreal-mcphub.exe call-tool read_unreal_skill --arguments-json "$args"
+```
+
+`run_unreal_skill` 目前即使只执行 inline Python，也仍要求显式提供
+`skill_name`、`script`、`args` 这几个字段，所以建议这样传：
+
+```powershell
+$args = @{
+  skill_name = $null
+  script = $null
+  args = @{}
+  python = "RESULT = {'ok': True, 'source': 'manual-cli-smoke'}"
+} | ConvertTo-Json -Compress
+target\debug\unreal-mcphub.exe call-tool run_unreal_skill --arguments-json "$args"
 ```
 
 查看当前 Hub 状态：
@@ -152,6 +175,9 @@ target\debug\unreal-mcphub.exe verify-ue --compile --wait-seconds 180 --output v
 target\debug\unreal-mcphub.exe verify-ue --compile --wait-seconds 180 --summary
 ```
 
+`--summary` 现在会直接写 stdout，适合在 PowerShell 里交互查看；如果你需要持久化
+报告文件，或者后面还要详细排查，`--output` 仍然是更合适的选择。
+
 发现可达实例：
 
 ```powershell
@@ -177,6 +203,16 @@ target\debug\unreal-mcphub.exe session <project>:<mcp-id>:<port> --scope history
 ```powershell
 target\debug\unreal-mcphub.exe sync-mcphub
 ```
+
+停止当前活动 Unreal Editor：
+
+```powershell
+target\debug\unreal-mcphub.exe stop
+```
+
+在 Windows 下，`stop` 会先尝试正常结束进程树；如果子进程阻止了优雅退出，会自动
+回退到强制终止，并同步刷新保存的实例状态，避免 Editor 已经退出但旧 PID 还被显示为
+在线。
 
 ## MCP Server
 

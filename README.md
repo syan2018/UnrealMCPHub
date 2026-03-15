@@ -105,6 +105,10 @@ target\debug\unreal-mcphub.exe setup "D:\Projects\Games\Unreal Projects\LyraStar
 
 When launched inside a directory that belongs to a UE project, UnrealMCPHub
 will also try to bind that project automatically before running the command.
+On Windows PowerShell, `call-tool --arguments-json` now accepts both strict
+JSON and the de-quoted object syntax PowerShell often forwards to native
+executables, but `ConvertTo-Json -Compress` is still the clearest way to pass
+non-empty arguments.
 
 Add another MCP under the active project:
 
@@ -128,6 +132,27 @@ Call one tool on the active MCP:
 
 ```powershell
 target\debug\unreal-mcphub.exe call-tool get_dispatch --arguments-json "{}"
+```
+
+Call one tool with non-empty arguments from PowerShell:
+
+```powershell
+$args = @{ skill_name = "cpp_editor_api"; path = "docs/overview.md" } | ConvertTo-Json -Compress
+target\debug\unreal-mcphub.exe call-tool read_unreal_skill --arguments-json "$args"
+```
+
+`run_unreal_skill` currently expects `skill_name`, `script`, and `args` to be
+present even when you are only using inline Python, so pass them explicitly as
+`null` / `{}`:
+
+```powershell
+$args = @{
+  skill_name = $null
+  script = $null
+  args = @{}
+  python = "RESULT = {'ok': True, 'source': 'manual-cli-smoke'}"
+} | ConvertTo-Json -Compress
+target\debug\unreal-mcphub.exe call-tool run_unreal_skill --arguments-json "$args"
 ```
 
 Show hub state:
@@ -166,6 +191,10 @@ If you only want a concise terminal summary instead of the full JSON payload, us
 target\debug\unreal-mcphub.exe verify-ue --compile --wait-seconds 180 --summary
 ```
 
+`--summary` writes directly to stdout and is safe to use interactively in
+PowerShell. `--output` remains the better option when you want a durable report
+artifact or need to inspect the full JSON later.
+
 Discover reachable instances:
 
 ```powershell
@@ -191,6 +220,17 @@ Mirror the active Unreal MCP into bundled `MCPHub`:
 ```powershell
 target\debug\unreal-mcphub.exe sync-mcphub
 ```
+
+Stop the active Unreal Editor instance:
+
+```powershell
+target\debug\unreal-mcphub.exe stop
+```
+
+On Windows, `stop` first attempts a normal tree shutdown and automatically
+falls back to a forced termination when child processes prevent a clean exit.
+The saved instance state is also refreshed so stale PIDs do not continue to
+appear as live after the editor is gone.
 
 ## MCP Server
 

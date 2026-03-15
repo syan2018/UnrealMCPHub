@@ -14,8 +14,11 @@ Use this skill when the task should be completed by running `UnrealMCPHub` comma
 - When the current working directory is already inside an Unreal project tree, rely on UnrealMCPHub's auto-bind behavior before adding extra selectors.
 - For the common single-project, single-MCP flow, omit `--project` and `--mcp`.
 - When `call-tool` is used, pass `--arguments-json` as a JSON object string.
+- In Windows PowerShell, prefer building non-empty `--arguments-json` values with `ConvertTo-Json -Compress`; this build also accepts the de-quoted object syntax PowerShell often forwards to native executables.
+- `run_unreal_skill` should be called with explicit `skill_name`, `script`, and `args` fields even when only `python` is meaningful, for example `{"skill_name":null,"script":null,"args":{},"python":"..."}`.
 - Prefer `verify-ue --summary` for interactive terminal checks, and `verify-ue --output <file>` when a full JSON report should be preserved.
 - `--wait-seconds` only controls how long UnrealMCPHub waits for the embedded MCP endpoint to become healthy; live verification steps can continue after that window.
+- On Windows, `stop` automatically falls back to a forced process-tree termination if a graceful stop leaves child processes behind.
 
 ## Primary Commands
 
@@ -43,8 +46,13 @@ Use this skill when the task should be completed by running `UnrealMCPHub` comma
 - Forward generic MCP operations:
   `target\debug\unreal-mcphub.exe list-tools`
   `target\debug\unreal-mcphub.exe call-tool <tool-name> --arguments-json "{}"`
+- Forward generic MCP operations with non-empty PowerShell arguments:
+  `$args = @{ skill_name = "cpp_editor_api"; path = "docs/overview.md" } | ConvertTo-Json -Compress`
+  `target\debug\unreal-mcphub.exe call-tool read_unreal_skill --arguments-json "$args"`
 - Mirror the selected MCP into bundled MCPHub:
   `target\debug\unreal-mcphub.exe sync-mcphub`
+- Stop the active editor instance:
+  `target\debug\unreal-mcphub.exe stop`
 
 ## Working Style
 
