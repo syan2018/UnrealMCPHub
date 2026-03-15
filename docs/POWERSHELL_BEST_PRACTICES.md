@@ -85,8 +85,8 @@ $args = @{
 } | ConvertTo-Json -Compress -Depth 8
 ```
 
-If a client still shows an older cached schema where all fields look required,
-refresh the tool catalog with `discover` or `sync-mcphub`.
+If the tool cache still looks stale after a plugin update, refresh it with
+`discover` or `sync-mcphub`.
 
 ## For Longer Inline Python, Use A Temporary File
 

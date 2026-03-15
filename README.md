@@ -3,15 +3,13 @@
 Additional documentation:
 
 - [中文说明](README.zh-CN.md)
-- [Feature Parity](docs/FEATURE_PARITY.md)
-- [功能对齐状态](docs/FEATURE_PARITY.zh-CN.md)
 - [PowerShell Best Practices](docs/POWERSHELL_BEST_PRACTICES.md)
 - [PowerShell 最佳实践](docs/POWERSHELL_BEST_PRACTICES.zh-CN.md)
 
 Standalone Unreal-focused hub that vendors
-[`MCPHub`](https://github.com/syan2018/MCPHub) as a git submodule and rebuilds
-the earlier Python Unreal hub workflow around the current `UnrealCopilot`
-plugin.
+[`MCPHub`](https://github.com/syan2018/MCPHub) as a git submodule and provides
+project lifecycle management, MCP discovery, and stable routing for the current
+`UnrealCopilot` plugin.
 
 `UnrealMCPHub` is positioned as a lifecycle-aware Unreal hub:
 
@@ -33,48 +31,39 @@ This project separates concerns into two layers:
   Generic MCP registry, discovery, and reusable upstream hub logic, consumed as
   a git submodule.
 
-The goal is to preserve the old UnrealHub user experience while moving the
-generic MCP substrate into the reusable Rust `MCPHub` project.
-
 ## Repository Layout
 
 - `src/`
   Standalone Rust binary and MCP server.
 - `vendor/MCPHub/`
   Git submodule pointing at the published `MCPHub` repository.
-- `docs/FEATURE_PARITY.md`
-  Migration and parity tracking against the older Python hub.
+- `docs/`
+  Usage references, including PowerShell guidance.
 
-## Current Status
-
-Implemented in this first standalone slice:
+## Capabilities
 
 - dedicated git repository with `MCPHub` as a submodule
 - persisted project config in `~/.unreal-mcphub/config.json`
 - persisted instance/session state in `~/.unreal-mcphub/state.json`
 - engine detection from `.uproject` and Windows registry
 - best-effort auto-bind from the current working directory into the matching Unreal project
-- configuration-driven MCP discovery strategies with a default UnrealCopilot strategy
-- project setup, status, compile, launch, discover, use-project, use-editor
+- configuration-driven MCP discovery strategies
+- project setup, status, compile, launch, discover, use-project, and use-editor
 - multiple configured MCP targets per project
 - active MCP switching inside one project
 - auto-discovery of the default project MCP plus manual registration of extra MCP targets
 - instance discovery driven by configured project MCP targets
-- stable active-instance tracking across editor stop / restart cycles
+- stable active-instance tracking across editor stop and restart cycles
 - plugin source config and local plugin install flow
 - crash report lookup from `Saved/Crashes`
-- session notes plus persisted call history / session snapshots
+- session notes plus persisted call history and session snapshots
 - background watcher during `serve` to refresh instance status and track crashes
 - per-instance health inspection for MCP reachability and process liveness
 - stdio and HTTP MCP facade serving modes
-- editor stop and restart flows for crash recovery
+- editor stop and restart flows for recovery
 - standard MCP forwarding through `list-tools`, `call-tool`, and `sync-mcphub`
-- stdio MCP facade with the orchestration tools above
-- `sync-mcphub` bridge that mirrors the active Unreal MCP into bundled
-  generic `MCPHub` via `register-http` + `discover`
-
-This project is still pre-release, so the persisted config/state schema follows
-the current canonical field names only. Old field aliases are intentionally not
+- `sync-mcphub` bridge that mirrors the active Unreal MCP into bundled generic `MCPHub`
+Config and state use the canonical field names only. Old field aliases are not
 supported.
 
 ## Discovery Strategies
@@ -142,11 +131,6 @@ plugin's config files and keys. In most cases the fields mean:
 Host defaults to `127.0.0.1`, path defaults to `/mcp`, transport defaults to
 `http`, and auto-start defaults to `false`, so those do not need extra config
 keys unless a plugin exposes overrides that UnrealMCPHub should read.
-
-Not implemented yet:
-
-- richer plugin-specific discovery strategies beyond the default UnrealCopilot setup
-- zip/GitHub plugin download pipeline
 
 ## Build
 
@@ -236,8 +220,8 @@ $args = @{
 target\debug\unreal-mcphub.exe call-tool run_unreal_skill --arguments-json "$args"
 ```
 
-If a client still shows the older cached schema where all four fields appear
-required, refresh the tool catalog with `discover` or `sync-mcphub`.
+If the tool cache looks stale after a plugin update, refresh the catalog with
+`discover` or `sync-mcphub`.
 
 Show hub state:
 

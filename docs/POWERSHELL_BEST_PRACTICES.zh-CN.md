@@ -84,8 +84,8 @@ $args = @{
 } | ConvertTo-Json -Compress -Depth 8
 ```
 
-如果某个客户端仍然把所有字段都显示成 required，重新执行一次 `discover`
-或 `sync-mcphub` 刷新工具缓存即可。
+如果插件更新后工具缓存看起来还是旧的，重新执行一次 `discover` 或
+`sync-mcphub` 刷新工具目录即可。
 
 ## 长一点的 inline Python，改用临时文件
 

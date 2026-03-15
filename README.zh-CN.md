@@ -3,8 +3,6 @@
 更多文档：
 
 - [English README](README.md)
-- [Feature Parity](docs/FEATURE_PARITY.md)
-- [功能对齐状态](docs/FEATURE_PARITY.zh-CN.md)
 - [PowerShell Best Practices](docs/POWERSHELL_BEST_PRACTICES.md)
 - [PowerShell 最佳实践](docs/POWERSHELL_BEST_PRACTICES.zh-CN.md)
 
@@ -36,14 +34,14 @@
 - 通用 MCP 能力放在 `MCPHub`
 - Unreal 专属能力放在 `UnrealMCPHub`
 
-## 当前已实现
+## 能力概览
 
 - 独立 Rust 仓库，内含 `MCPHub` submodule
 - 持久化项目配置：`~/.unreal-mcphub/config.json`
 - 持久化实例与会话状态：`~/.unreal-mcphub/state.json`
 - 从 `.uproject` 与 Windows 注册表自动探测引擎
 - 从当前工作目录 best-effort 自动绑定匹配的 Unreal project
-- 配置驱动的 MCP discovery strategy，默认内置 UnrealCopilot 策略
+- 配置驱动的 MCP discovery strategy
 - `setup`、`status`、`compile`、`launch`、`discover`、`use-project`、`use-editor`
 - 单个 project 下可配置多个 MCP
 - 支持 project 内 active MCP 切换
@@ -61,8 +59,7 @@
 - 通过 `list-tools`、`call-tool`、`sync-mcphub` 提供标准 MCP 转发
 - `sync-mcphub`，将当前活动 Unreal MCP 同步到 bundled `MCPHub`
 
-这个项目目前仍处于 pre-release 阶段，所以持久化配置和状态只支持当前这套规范字段名，
-不会为旧字段别名保留兼容层。
+配置与状态文件只支持当前这套规范字段名，不提供旧字段别名。
 
 ## Discovery Strategies
 
@@ -126,13 +123,6 @@ MCP 插件。
 Host 默认就是 `127.0.0.1`，路径默认就是 `/mcp`，transport 默认就是 `http`，
 auto-start 默认就是 `false`。所以这些默认值不需要再单独加配置项，只有插件真的暴露了
 可读取的覆盖字段时，才需要在 strategy 里写对应的 `*_key`。
-
-## 仍未完成
-
-- 更丰富的插件专属 discovery strategy，而不只是一条默认 UnrealCopilot 策略
-- zip / GitHub 插件下载链路
-- cook / package 流程
-- 日志 tail 与构建日志分析
 
 ## 构建
 
@@ -215,8 +205,8 @@ $args = @{
 target\debug\unreal-mcphub.exe call-tool run_unreal_skill --arguments-json "$args"
 ```
 
-如果某个客户端仍然显示旧 schema，把四个字段都当成 required，重新执行一次
-`discover` 或 `sync-mcphub` 刷新工具缓存即可。
+如果插件更新后工具缓存看起来还是旧的，重新执行一次 `discover` 或
+`sync-mcphub` 刷新工具目录即可。
 
 查看当前 Hub 状态：
 
