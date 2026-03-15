@@ -3,8 +3,6 @@
 Additional documentation:
 
 - [中文说明](README.zh-CN.md)
-- [PowerShell Best Practices](docs/POWERSHELL_BEST_PRACTICES.md)
-- [PowerShell 最佳实践](docs/POWERSHELL_BEST_PRACTICES.zh-CN.md)
 
 Standalone Unreal-focused hub that vendors
 [`MCPHub`](https://github.com/syan2018/MCPHub) as a git submodule and provides
@@ -37,8 +35,6 @@ This project separates concerns into two layers:
   Standalone Rust binary and MCP server.
 - `vendor/MCPHub/`
   Git submodule pointing at the published `MCPHub` repository.
-- `docs/`
-  Usage references, including PowerShell guidance.
 
 ## Capabilities
 
@@ -168,8 +164,6 @@ On Windows PowerShell, `call-tool --arguments-json` now accepts both strict
 JSON and the de-quoted object syntax PowerShell often forwards to native
 executables, but `ConvertTo-Json -Compress` is still the clearest way to pass
 non-empty arguments.
-For more reliable quoting and `run_unreal_skill` examples, see
-[`docs/POWERSHELL_BEST_PRACTICES.md`](docs/POWERSHELL_BEST_PRACTICES.md).
 
 For embedded Unreal plugin MCPs, `launch` and `verify-ue` can only connect once
 the endpoint is actually running. If the discovered endpoint shows
