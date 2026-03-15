@@ -1,5 +1,6 @@
 mod cli;
 mod config;
+mod json_args;
 mod orchestrator;
 mod paths;
 mod process;

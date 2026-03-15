@@ -1,10 +1,12 @@
 use std::fmt::Write as _;
 use std::fs;
+use std::io::{self, Write};
 use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 
+use crate::json_args;
 use crate::orchestrator;
 use crate::server;
 
@@ -287,6 +289,14 @@ fn render_verify_summary(
     out.trim_end().to_string()
 }
 
+fn write_stdout_line(text: &str) -> Result<()> {
+    let mut stdout = io::stdout().lock();
+    stdout.write_all(text.as_bytes())?;
+    stdout.write_all(b"\n")?;
+    stdout.flush()?;
+    Ok(())
+}
+
 pub async fn run() -> Result<()> {
     let cli = Cli::parse();
     if let Err(error) = orchestrator::bind_project_from_current_dir().await {
@@ -323,18 +333,12 @@ pub async fn run() -> Result<()> {
             Ok(())
         }
         Command::CallTool(args) => {
-            let arguments = serde_json::from_str(&args.arguments_json)?;
+            let arguments = json_args::parse_object_argument(&args.arguments_json)?;
             let output = orchestrator::call_tool(
                 args.project.as_deref(),
                 args.mcp.as_deref(),
                 &args.tool_name,
-                match arguments {
-                    serde_json::Value::Object(map) => map,
-                    serde_json::Value::Null => serde_json::Map::new(),
-                    other => {
-                        anyhow::bail!("expected JSON object for --arguments-json, got {other}")
-                    }
-                },
+                arguments,
             )
             .await?;
             println!("{}", serde_json::to_string_pretty(&output)?);
@@ -437,20 +441,21 @@ pub async fn run() -> Result<()> {
         Command::VerifyUe(args) => {
             let report =
                 orchestrator::verify_ue(args.wait_seconds, args.compile, args.stop_editor).await?;
-            let rendered = serde_json::to_string_pretty(&report)?;
             let summary = render_verify_summary(&report, args.output.as_ref());
             if let Some(path) = args.output {
+                let rendered = serde_json::to_string_pretty(&report)?;
                 if let Some(parent) = path.parent() {
                     if !parent.as_os_str().is_empty() {
                         fs::create_dir_all(parent)?;
                     }
                 }
                 fs::write(&path, rendered.as_bytes())?;
-                println!("{summary}");
+                write_stdout_line(&summary)?;
             } else if args.summary {
-                println!("{summary}");
+                write_stdout_line(&summary)?;
             } else {
-                println!("{rendered}");
+                let rendered = serde_json::to_string_pretty(&report)?;
+                write_stdout_line(&rendered)?;
             }
             Ok(())
         }

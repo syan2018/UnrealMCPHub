@@ -546,7 +546,8 @@ pub async fn discover_instances() -> Result<DiscoveryResult> {
 
         if let Some(existing) = state.get_instance(&candidate.instance_key).cloned() {
             if matches!(existing.status.as_str(), "online" | "starting") {
-                state.update_instance_status(&existing.key, "offline", existing.pid)?;
+                let pid = existing.pid.filter(|pid| is_process_alive(*pid));
+                state.update_instance_status(&existing.key, "offline", pid)?;
             }
         }
     }
@@ -622,32 +623,35 @@ pub async fn stop_editor(instance: Option<&str>, force: bool) -> Result<StopEdit
     let instance = resolve_instance_or_active(&state, instance)?;
     let pid = instance.pid;
     let was_running = pid.map(is_process_alive).unwrap_or(false);
-    let mut stopped = false;
+    let mut stopped = pid.is_none();
+    let mut force_used = force;
 
     if let Some(pid) = pid {
         if was_running {
-            terminate_process(pid, force)?;
-            for _ in 0..20 {
-                if !is_process_alive(pid) {
-                    break;
-                }
-                sleep(Duration::from_millis(250)).await;
+            force_used = terminate_process(pid, force)?;
+            stopped = wait_for_process_exit(pid, 20, Duration::from_millis(250)).await;
+
+            if !stopped && !force_used {
+                force_used = terminate_process(pid, true)?;
+                stopped = wait_for_process_exit(pid, 20, Duration::from_millis(250)).await;
             }
-            stopped = !is_process_alive(pid);
         } else {
             stopped = true;
+            force_used = false;
         }
     }
 
     let mut state = StateStore::load()?;
-    state.update_instance_status(&instance.key, "offline", pid)?;
+    let final_pid = if stopped { None } else { pid };
+    let final_status = if stopped { "offline" } else { "stopping" };
+    state.update_instance_status(&instance.key, final_status, final_pid)?;
 
     Ok(StopEditorResult {
         instance_key: instance.key,
         pid,
         was_running,
         stopped,
-        force,
+        force: force_used,
     })
 }
 
@@ -776,6 +780,12 @@ pub async fn get_instance_health(instance: Option<&str>) -> Result<InstanceHealt
     health_instance.notes.clear();
     health_instance.call_history.clear();
     if instance.url.is_empty() || instance.port == 0 {
+        if instance.pid.is_some() && process_alive == Some(false) {
+            let mut state = StateStore::load()?;
+            state.update_instance_status(&instance.key, "offline", None)?;
+            health_instance.pid = None;
+            health_instance.status = "offline".to_string();
+        }
         return Ok(InstanceHealthReport {
             instance: health_instance,
             process_alive,
@@ -788,6 +798,25 @@ pub async fn get_instance_health(instance: Option<&str>) -> Result<InstanceHealt
         Ok(health) => (Some(health), None),
         Err(error) => (None, Some(error.to_string())),
     };
+
+    let refreshed_pid = match process_alive {
+        Some(true) => instance.pid,
+        Some(false) => None,
+        None => None,
+    };
+    let refreshed_status = if endpoint_health.is_some() {
+        "online"
+    } else if process_alive == Some(false) {
+        "offline"
+    } else {
+        instance.status.as_str()
+    };
+    if refreshed_status != instance.status || refreshed_pid != instance.pid {
+        let mut state = StateStore::load()?;
+        state.update_instance_status(&instance.key, refreshed_status, refreshed_pid)?;
+    }
+    health_instance.status = refreshed_status.to_string();
+    health_instance.pid = refreshed_pid;
 
     Ok(InstanceHealthReport {
         instance: health_instance,
@@ -1539,6 +1568,16 @@ async fn wait_for_health(url: &str, wait_seconds: u64) -> Result<EndpointHealth>
         }
     }
     Err(last_error.unwrap_or_else(|| anyhow!("MCP target never became healthy")))
+}
+
+async fn wait_for_process_exit(pid: u32, attempts: usize, interval: Duration) -> bool {
+    for _ in 0..attempts {
+        if !is_process_alive(pid) {
+            return true;
+        }
+        sleep(interval).await;
+    }
+    !is_process_alive(pid)
 }
 
 fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {

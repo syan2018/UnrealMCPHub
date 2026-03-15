@@ -192,9 +192,7 @@ impl StateStore {
             if let Some(instance) = self.data.instances.get_mut(&resolved) {
                 instance.status = status.to_string();
                 instance.last_seen = now_timestamp();
-                if pid.is_some() {
-                    instance.pid = pid;
-                }
+                instance.pid = pid;
                 changed = true;
             }
         }
@@ -209,6 +207,7 @@ impl StateStore {
         if let Some(resolved) = self.resolve_instance_key(identifier) {
             if let Some(instance) = self.data.instances.get_mut(&resolved) {
                 instance.status = "crashed".to_string();
+                instance.pid = None;
                 instance.crash_count = instance.crash_count.saturating_add(1);
                 instance.last_seen = now_timestamp();
                 changed = true;

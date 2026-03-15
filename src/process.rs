@@ -34,28 +34,27 @@ pub fn is_process_alive(pid: u32) -> bool {
     }
 }
 
-pub fn terminate_process(pid: u32, force: bool) -> Result<()> {
+pub fn terminate_process(pid: u32, force: bool) -> Result<bool> {
     if pid == 0 {
         bail!("pid must be greater than 0");
     }
 
     #[cfg(windows)]
     {
-        let mut command = Command::new("taskkill");
-        command.args(["/PID", &pid.to_string(), "/T"]);
         if force {
-            command.arg("/F");
+            invoke_taskkill(pid, true)?;
+            return Ok(true);
         }
-        let output = command
-            .output()
-            .with_context(|| format!("failed to invoke taskkill for PID {pid}"))?;
-        if !output.status.success() {
-            bail!(
-                "taskkill failed for PID {pid}: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
+
+        match invoke_taskkill(pid, false) {
+            Ok(()) => Ok(false),
+            Err(initial_error) => match invoke_taskkill(pid, true) {
+                Ok(()) => Ok(true),
+                Err(force_error) => bail!(
+                    "taskkill failed for PID {pid}: graceful={initial_error}; forced={force_error}"
+                ),
+            },
         }
-        return Ok(());
     }
 
     #[cfg(not(windows))]
@@ -71,6 +70,38 @@ pub fn terminate_process(pid: u32, force: bool) -> Result<()> {
                 String::from_utf8_lossy(&output.stderr)
             );
         }
-        Ok(())
+        Ok(force)
     }
+}
+
+#[cfg(windows)]
+fn invoke_taskkill(pid: u32, force: bool) -> Result<()> {
+    let mut command = Command::new("taskkill");
+    command.args(["/PID", &pid.to_string(), "/T"]);
+    if force {
+        command.arg("/F");
+    }
+
+    let output = command
+        .output()
+        .with_context(|| format!("failed to invoke taskkill for PID {pid}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let details = [stderr, stdout]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    bail!(
+        "{}",
+        if details.is_empty() {
+            format!("taskkill returned exit code {}", output.status)
+        } else {
+            details
+        }
+    )
 }
