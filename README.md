@@ -5,6 +5,8 @@ Additional documentation:
 - [中文说明](README.zh-CN.md)
 - [Feature Parity](docs/FEATURE_PARITY.md)
 - [功能对齐状态](docs/FEATURE_PARITY.zh-CN.md)
+- [PowerShell Best Practices](docs/POWERSHELL_BEST_PRACTICES.md)
+- [PowerShell 最佳实践](docs/POWERSHELL_BEST_PRACTICES.zh-CN.md)
 
 Standalone Unreal-focused hub that vendors
 [`MCPHub`](https://github.com/syan2018/MCPHub) as a git submodule and rebuilds
@@ -182,6 +184,8 @@ On Windows PowerShell, `call-tool --arguments-json` now accepts both strict
 JSON and the de-quoted object syntax PowerShell often forwards to native
 executables, but `ConvertTo-Json -Compress` is still the clearest way to pass
 non-empty arguments.
+For more reliable quoting and `run_unreal_skill` examples, see
+[`docs/POWERSHELL_BEST_PRACTICES.md`](docs/POWERSHELL_BEST_PRACTICES.md).
 
 For embedded Unreal plugin MCPs, `launch` and `verify-ue` can only connect once
 the endpoint is actually running. If the discovered endpoint shows
@@ -221,19 +225,19 @@ $args = @{ skill_name = "cpp_editor_api"; path = "docs/overview.md" } | ConvertT
 target\debug\unreal-mcphub.exe call-tool read_unreal_skill --arguments-json "$args"
 ```
 
-`run_unreal_skill` currently expects `skill_name`, `script`, and `args` to be
-present even when you are only using inline Python, so pass them explicitly as
-`null` / `{}`:
+`run_unreal_skill` now honors its optional defaults correctly, so you only need
+to send the fields you are actually using. Inline Python can be called with
+just `python`:
 
 ```powershell
 $args = @{
-  skill_name = $null
-  script = $null
-  args = @{}
   python = "RESULT = {'ok': True, 'source': 'manual-cli-smoke'}"
 } | ConvertTo-Json -Compress
 target\debug\unreal-mcphub.exe call-tool run_unreal_skill --arguments-json "$args"
 ```
+
+If a client still shows the older cached schema where all four fields appear
+required, refresh the tool catalog with `discover` or `sync-mcphub`.
 
 Show hub state:
 

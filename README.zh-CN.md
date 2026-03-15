@@ -5,6 +5,8 @@
 - [English README](README.md)
 - [Feature Parity](docs/FEATURE_PARITY.md)
 - [功能对齐状态](docs/FEATURE_PARITY.zh-CN.md)
+- [PowerShell Best Practices](docs/POWERSHELL_BEST_PRACTICES.md)
+- [PowerShell 最佳实践](docs/POWERSHELL_BEST_PRACTICES.zh-CN.md)
 
 `UnrealMCPHub` 是一个面向 Unreal 的生命周期 Hub。它 vendored 了通用
 [`MCPHub`](https://github.com/syan2018/MCPHub) 作为 git submodule，并在此之上
@@ -164,6 +166,8 @@ target\debug\unreal-mcphub.exe setup "D:\Projects\Games\Unreal Projects\LyraStar
 在 Windows PowerShell 下，`call-tool --arguments-json` 现在同时兼容严格 JSON
 和 PowerShell 传给原生 exe 时常见的“去引号对象”形式，但传非空参数时仍建议优先
 使用 `ConvertTo-Json -Compress`，可读性和稳定性都更好。
+更完整的引号处理、`run_unreal_skill` 示例和临时脚本写法，见
+[`docs/POWERSHELL_BEST_PRACTICES.zh-CN.md`](docs/POWERSHELL_BEST_PRACTICES.zh-CN.md)。
 
 对于嵌入在 Unreal 插件里的 MCP，`launch` 和 `verify-ue` 只能在 endpoint 实际启动后
 才能连通。如果发现到的 endpoint 显示 `auto_start=false`，那就表示 UnrealMCPHub
@@ -201,18 +205,18 @@ $args = @{ skill_name = "cpp_editor_api"; path = "docs/overview.md" } | ConvertT
 target\debug\unreal-mcphub.exe call-tool read_unreal_skill --arguments-json "$args"
 ```
 
-`run_unreal_skill` 目前即使只执行 inline Python，也仍要求显式提供
-`skill_name`、`script`、`args` 这几个字段，所以建议这样传：
+`run_unreal_skill` 现在已经会正确遵守 optional 默认值，只需要传你当前实际会
+用到的字段。执行 inline Python 时，最简单可以只传 `python`：
 
 ```powershell
 $args = @{
-  skill_name = $null
-  script = $null
-  args = @{}
   python = "RESULT = {'ok': True, 'source': 'manual-cli-smoke'}"
 } | ConvertTo-Json -Compress
 target\debug\unreal-mcphub.exe call-tool run_unreal_skill --arguments-json "$args"
 ```
+
+如果某个客户端仍然显示旧 schema，把四个字段都当成 required，重新执行一次
+`discover` 或 `sync-mcphub` 刷新工具缓存即可。
 
 查看当前 Hub 状态：
 
