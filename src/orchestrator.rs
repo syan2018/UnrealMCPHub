@@ -18,7 +18,6 @@ use crate::paths::{
 };
 use crate::process::{find_process_pid_by_command_line, is_process_alive, terminate_process};
 use crate::state::{InstanceState, Note, StateStore, ToolCallRecord, make_instance_key};
-use crate::submodule;
 use crate::ue_client::{EndpointHealth, ToolCallOutput, ToolDescriptor, UeClient};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -51,7 +50,7 @@ pub struct HubStatus {
     pub known_instances: Vec<InstanceState>,
     pub plugin_source_local: String,
     pub plugin_source_repo: String,
-    pub mcphub_submodule_path: String,
+    pub mcphub_state_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -275,9 +274,7 @@ pub fn hub_status() -> Result<HubStatus> {
         known_instances: state.list_instances().into_iter().cloned().collect(),
         plugin_source_local: config.plugin_source_local().to_string(),
         plugin_source_repo: config.plugin_source_repo().to_string(),
-        mcphub_submodule_path: crate::submodule::mcphub_manifest_path()
-            .display()
-            .to_string(),
+        mcphub_state_path: crate::mcphub::mcphub_state_path().display().to_string(),
     })
 }
 
@@ -936,13 +933,14 @@ pub async fn call_tool(
     })
 }
 
-pub fn sync_mcphub(project_name: Option<&str>, mcp_id: Option<&str>) -> Result<String> {
+pub async fn sync_mcphub(project_name: Option<&str>, mcp_id: Option<&str>) -> Result<String> {
     let (project_name, project, endpoint) = resolve_project_and_endpoint(project_name, mcp_id)?;
-    submodule::sync_endpoint_with_mcphub(
+    crate::mcphub::sync_endpoint_with_mcphub(
         &endpoint.endpoint_id,
         &project_endpoint_url(&endpoint),
         &endpoint_display_name(&project_name, &project, &endpoint),
     )
+    .await
 }
 
 pub async fn verify_ue(
@@ -1444,7 +1442,7 @@ pub async fn verify_ue(
         ),
     }
 
-    match sync_mcphub(None, None) {
+    match sync_mcphub(None, None).await {
         Ok(output) => push_verification_check(
             &mut checks,
             "sync_mcphub",

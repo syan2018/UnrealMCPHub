@@ -443,7 +443,7 @@ pub async fn run() -> Result<()> {
         Command::SyncMcphub(args) => {
             println!(
                 "{}",
-                orchestrator::sync_mcphub(args.project.as_deref(), args.mcp.as_deref())?
+                orchestrator::sync_mcphub(args.project.as_deref(), args.mcp.as_deref()).await?
             );
             Ok(())
         }

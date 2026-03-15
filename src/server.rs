@@ -350,6 +350,7 @@ impl UnrealFacade {
             McpRequest::Sync { project, mcp } => Ok(action_message(
                 "sync",
                 orchestrator::sync_mcphub(project.as_deref(), mcp.as_deref())
+                    .await
                     .map_err(to_tool_error)?,
             )),
         }

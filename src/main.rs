@@ -1,12 +1,12 @@
 mod cli;
 mod config;
 mod json_args;
+mod mcphub;
 mod orchestrator;
 mod paths;
 mod process;
 mod server;
 mod state;
-mod submodule;
 mod ue_client;
 mod watcher;
 
