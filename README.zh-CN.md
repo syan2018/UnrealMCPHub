@@ -15,7 +15,8 @@
 - 根据配置识别和发现嵌入在 Unreal 工程或插件中的 MCP 接口
 - 在 Unreal 工程目录中启动时，自动尝试绑定当前 project
 - 在 Unreal Editor 重启、崩溃恢复、活动实例切换时维持稳定连接语义
-- 把当前活动的 Unreal MCP 同步到 bundled 的通用 `MCPHub`
+- 把当前活动的 Unreal MCP 同步到 UnrealMCPHub 内部使用的
+  MCPHub catalog / runtime
 
 ## 架构分层
 
@@ -25,7 +26,8 @@
   Unreal-aware 的上层 Hub，负责项目配置、Editor 生命周期、实例发现、会话状态、
   崩溃恢复、MCP 发现与路由，以及对外 MCP/CLI 表面。
 - `vendor/MCPHub`
-  通用的 MCP registry、discovery、invoke 与 facade 能力，作为可复用底座存在。
+  通用的 MCP registry、discovery、invoke 与 runtime/library 能力，作为可复用
+  底座存在。
 
 这意味着边界是清晰的：
 
@@ -51,11 +53,12 @@
 - session notes、调用历史、session snapshot
 - `serve` 生命周期内的 watcher，用于刷新实例状态、跟踪 crash、清理 stale instance
 - 实例健康检查，覆盖 MCP reachability 与 process liveness
-- stdio MCP facade
-- HTTP MCP facade
+- stdio MCP server
+- HTTP MCP server
 - `stop_editor` / `restart_editor`
 - 通过 `list-tools`、`call-tool`、`sync-mcphub` 提供标准 MCP 转发
-- `sync-mcphub`，将当前活动 Unreal MCP 同步到 bundled `MCPHub`
+- `sync-mcphub`，刷新 `list-tools` 与 `call-tool` 使用的内部
+  MCPHub catalog
 
 配置与状态文件只支持当前这套规范字段名，不提供旧字段别名。
 
@@ -129,14 +132,14 @@ cd UnrealMCPHub
 cargo build
 ```
 
-## 同步 bundled MCPHub
+## 更新 vendored MCPHub
 
 `vendor/MCPHub` 是标准 git submodule，应该以远端 `MCPHub` 仓库为真源同步：
 
 ```powershell
 git submodule update --remote vendor/MCPHub
 git add vendor/MCPHub
-git commit -m "chore: bump bundled mcphub"
+git commit -m "chore: bump vendored mcphub"
 ```
 
 ## CLI 快速示例
@@ -210,18 +213,15 @@ target\debug\unreal-mcphub.exe call-tool run_unreal_skill --arguments-json "$arg
 如果插件更新后工具缓存看起来还是旧的，重新执行一次 `discover` 或
 `sync-mcphub` 刷新工具目录即可。
 
-如果你想看整套已同步工具的缓存 schema 和输入模板，优先直接使用 bundled 的
-`mcphub.exe` CLI，而不是再额外暴露一层 facade 工具面：
+日常使用只需要 `unreal-mcphub.exe`。vendored 的 `MCPHub` 仓库只是内部实现
+依赖，不是需要你手动调用的 companion 可执行文件。
 
 ```powershell
-vendor\MCPHub\target\debug\mcphub.exe tool-info --all --json lyrastartergame-local
+target\debug\unreal-mcphub.exe sync-mcphub
+target\debug\unreal-mcphub.exe list-tools --json
 ```
 
-如果只想看单个工具：
-
-```powershell
-vendor\MCPHub\target\debug\mcphub.exe tool-info lyrastartergame-local/run_unreal_skill --json
-```
+这样会先刷新同步后的工具目录，再查看 UnrealMCPHub 自己暴露出来的当前工具面。
 
 查看当前 Hub 状态：
 
@@ -287,7 +287,7 @@ target\debug\unreal-mcphub.exe session --scope full --limit 20
 target\debug\unreal-mcphub.exe session <project>:<mcp-id>:<port> --scope history --limit 50
 ```
 
-把当前活动 Unreal MCP 同步到 bundled `MCPHub`：
+刷新当前活动 Unreal MCP 对应的内部同步 catalog：
 
 ```powershell
 target\debug\unreal-mcphub.exe sync-mcphub

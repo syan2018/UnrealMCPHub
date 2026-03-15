@@ -16,7 +16,8 @@ project lifecycle management, MCP discovery, and stable routing for the current
   plugins
 - auto-bind the current project when launched inside an Unreal project tree
 - reconnect and keep a stable control surface across Unreal editor restarts
-- bridge the active Unreal MCP into the bundled generic `MCPHub`
+- sync the active Unreal MCP into the internal MCPHub-backed catalog and
+  runtime
 
 ## Design
 
@@ -55,10 +56,11 @@ This project separates concerns into two layers:
 - session notes plus persisted call history and session snapshots
 - background watcher during `serve` to refresh instance status and track crashes
 - per-instance health inspection for MCP reachability and process liveness
-- stdio and HTTP MCP facade serving modes
+- stdio and HTTP MCP server modes
 - editor stop and restart flows for recovery
 - standard MCP forwarding through `list-tools`, `call-tool`, and `sync-mcphub`
-- `sync-mcphub` bridge that mirrors the active Unreal MCP into bundled generic `MCPHub`
+- `sync-mcphub` refreshes the internal MCPHub-backed catalog used by
+  `list-tools` and `call-tool`
 Config and state use the canonical field names only. Old field aliases are not
 supported.
 
@@ -135,7 +137,7 @@ cd UnrealMCPHub
 cargo build
 ```
 
-## Syncing Bundled MCPHub
+## Updating Vendored MCPHub
 
 `vendor/MCPHub` is a normal git submodule pointing at the upstream MCPHub
 repository. The intended sync flow is to update that submodule from upstream
@@ -144,7 +146,7 @@ first, then commit the new submodule pointer in `UnrealMCPHub`.
 ```powershell
 git submodule update --remote vendor/MCPHub
 git add vendor/MCPHub
-git commit -m "chore: bump bundled mcphub"
+git commit -m "chore: bump vendored mcphub"
 ```
 
 ## CLI Quick Start
@@ -223,19 +225,17 @@ target\debug\unreal-mcphub.exe call-tool run_unreal_skill --arguments-json "$arg
 If the tool cache looks stale after a plugin update, refresh the catalog with
 `discover` or `sync-mcphub`.
 
-If you want the full synced tool surface with cached schemas and starter input
-templates, prefer the bundled `mcphub.exe` CLI directly instead of exposing
-another MCP facade layer:
+Normal day-to-day usage should stay on `unreal-mcphub.exe`. The vendored
+`MCPHub` repository is an internal implementation dependency, not a companion
+runtime executable you need to invoke directly.
 
 ```powershell
-vendor\MCPHub\target\debug\mcphub.exe tool-info --all --json lyrastartergame-local
+target\debug\unreal-mcphub.exe sync-mcphub
+target\debug\unreal-mcphub.exe list-tools --json
 ```
 
-And if you only want one tool:
-
-```powershell
-vendor\MCPHub\target\debug\mcphub.exe tool-info lyrastartergame-local/run_unreal_skill --json
-```
+That keeps the synced catalog current and shows the active tool surface exposed
+through UnrealMCPHub itself.
 
 Show hub state:
 
@@ -307,7 +307,7 @@ target\debug\unreal-mcphub.exe session --scope full --limit 20
 target\debug\unreal-mcphub.exe session <project>:<mcp-id>:<port> --scope history --limit 50
 ```
 
-Mirror the active Unreal MCP into bundled `MCPHub`:
+Refresh the internal synced catalog for the active Unreal MCP:
 
 ```powershell
 target\debug\unreal-mcphub.exe sync-mcphub
