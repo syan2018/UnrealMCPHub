@@ -8,6 +8,21 @@
 [`MCPHub`](https://github.com/syan2018/MCPHub) 作为 git submodule，并在此之上
 实现 Unreal 项目、Editor 进程和内嵌 MCP 接口的统一管理。
 
+最容易理解它的方式，是把它看成“项目侧 Unreal MCP 插件之外的一层生命周期与
+路由中枢”。对大多数用户来说，推荐直接搭配一个会在编辑器内暴露 MCP endpoint
+的 Unreal 插件一起使用，例如：
+
+- [`UnrealCopilot`](https://github.com/syan2018/UnrealCopilot)
+- [`UnrealRemoteMCP`](https://github.com/blackplume233/UnrealRemoteMCP)
+
+单独使用 `UnrealMCPHub` 也能做项目配置、进程管理、实例发现和工具路由，但只有
+当这些插件之一已经安装好，并且配置为自动启动或能稳定暴露 MCP endpoint 时，
+整体体验才会完整。
+
+[`blackplume233/UnrealMCPHub`](https://github.com/blackplume233/UnrealMCPHub)
+也是这个方向上的一个可用选项。这个项目在集成思路上明显参考了它，然后再结合
+我自己的技术栈和实际需求，做了一层更通用的适配。
+
 这个项目的核心目标不是只做一个启动器，也不是只做一个代理，而是提供一个
 稳定的控制中枢：
 

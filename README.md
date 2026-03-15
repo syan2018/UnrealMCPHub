@@ -9,6 +9,22 @@ Standalone Unreal-focused hub that vendors
 project lifecycle management, MCP discovery, and stable routing for the current
 `UnrealCopilot` plugin.
 
+`UnrealMCPHub` is easiest to understand as the lifecycle and routing layer
+around a project-side Unreal MCP plugin. Most users should pair it with an
+actual Unreal plugin that exposes an MCP endpoint inside the editor, such as:
+
+- [`UnrealCopilot`](https://github.com/syan2018/UnrealCopilot)
+- [`UnrealRemoteMCP`](https://github.com/blackplume233/UnrealRemoteMCP)
+
+On its own, `UnrealMCPHub` can manage projects, processes, discovery, and tool
+routing, but it becomes much more useful when one of those plugins is present
+and configured to auto-start or otherwise expose its MCP endpoint.
+
+[`blackplume233/UnrealMCPHub`](https://github.com/blackplume233/UnrealMCPHub)
+is also a valid option in this space. This project borrows from that general
+integration direction, then adapts it toward a more general workflow around my
+own stack and day-to-day needs.
+
 `UnrealMCPHub` is positioned as a lifecycle-aware Unreal hub:
 
 - manage Unreal project lifecycle through either CLI or MCP tools
