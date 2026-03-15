@@ -48,11 +48,17 @@ Use this skill when the task should be completed by running `UnrealMCPHub` comma
 - Forward generic MCP operations:
   `target\debug\unreal-mcphub.exe list-tools`
   `target\debug\unreal-mcphub.exe call-tool <tool-name> --arguments-json "{}"`
+- Inspect the current tool surface with schema details:
+  `target\debug\unreal-mcphub.exe list-tools --json`
 - Forward generic MCP operations with non-empty PowerShell arguments:
   `$args = @{ skill_name = "cpp_editor_api"; path = "docs/overview.md" } | ConvertTo-Json -Compress`
   `target\debug\unreal-mcphub.exe call-tool read_unreal_skill --arguments-json "$args"`
 - Mirror the selected MCP into bundled MCPHub:
   `target\debug\unreal-mcphub.exe sync-mcphub`
+- After `sync-mcphub`, inspect the full synced tool surface without exposing extra facade tools:
+  `vendor\MCPHub\target\debug\mcphub.exe tool-info --all --json <mcp-id>`
+- To zoom in on one synced tool only:
+  `vendor\MCPHub\target\debug\mcphub.exe tool-info <mcp-id>/<tool-name> --json`
 - Stop the active editor instance:
   `target\debug\unreal-mcphub.exe stop`
 

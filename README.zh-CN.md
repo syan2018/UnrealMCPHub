@@ -182,6 +182,12 @@ target\debug\unreal-mcphub.exe use-mcp tools-secondary
 target\debug\unreal-mcphub.exe list-tools
 ```
 
+列出工具，同时查看描述和输入 schema：
+
+```powershell
+target\debug\unreal-mcphub.exe list-tools --json
+```
+
 调用当前 active MCP 上的一个工具：
 
 ```powershell
@@ -207,6 +213,19 @@ target\debug\unreal-mcphub.exe call-tool run_unreal_skill --arguments-json "$arg
 
 如果插件更新后工具缓存看起来还是旧的，重新执行一次 `discover` 或
 `sync-mcphub` 刷新工具目录即可。
+
+如果你想看整套已同步工具的缓存 schema 和输入模板，优先直接使用 bundled 的
+`mcphub.exe` CLI，而不是再额外暴露一层 facade 工具面：
+
+```powershell
+vendor\MCPHub\target\debug\mcphub.exe tool-info --all --json lyrastartergame-local
+```
+
+如果只想看单个工具：
+
+```powershell
+vendor\MCPHub\target\debug\mcphub.exe tool-info lyrastartergame-local/run_unreal_skill --json
+```
 
 查看当前 Hub 状态：
 

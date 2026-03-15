@@ -196,6 +196,12 @@ List tools on the active MCP:
 target\debug\unreal-mcphub.exe list-tools
 ```
 
+List tools with descriptions and input schemas:
+
+```powershell
+target\debug\unreal-mcphub.exe list-tools --json
+```
+
 Call one tool on the active MCP:
 
 ```powershell
@@ -222,6 +228,20 @@ target\debug\unreal-mcphub.exe call-tool run_unreal_skill --arguments-json "$arg
 
 If the tool cache looks stale after a plugin update, refresh the catalog with
 `discover` or `sync-mcphub`.
+
+If you want the full synced tool surface with cached schemas and starter input
+templates, prefer the bundled `mcphub.exe` CLI directly instead of exposing
+another MCP facade layer:
+
+```powershell
+vendor\MCPHub\target\debug\mcphub.exe tool-info --all --json lyrastartergame-local
+```
+
+And if you only want one tool:
+
+```powershell
+vendor\MCPHub\target\debug\mcphub.exe tool-info lyrastartergame-local/run_unreal_skill --json
+```
 
 Show hub state:
 
