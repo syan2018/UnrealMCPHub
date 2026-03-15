@@ -236,7 +236,16 @@ fn render_verify_summary(
     let _ = writeln!(out, "wait_seconds: {}", report.wait_seconds);
 
     if let Some(launch) = &report.launch {
-        let _ = writeln!(out, "editor: launched pid={}", launch.pid);
+        let _ = writeln!(
+            out,
+            "editor: {} pid={}",
+            if launch.reused_existing {
+                "reused"
+            } else {
+                "launched"
+            },
+            launch.pid
+        );
     } else if let Some(health) = &report.health {
         let pid = health.instance.pid.unwrap_or_default();
         let _ = writeln!(out, "editor: reused pid={}", pid);

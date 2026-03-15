@@ -15,123 +15,118 @@ use serde_json::{Map, Value};
 use tokio_util::sync::CancellationToken;
 
 use crate::orchestrator;
-use crate::state::Note;
-use crate::ue_client::ToolDescriptor;
 use crate::watcher::ProcessWatcher;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct SetupProjectRequest {
-    uproject_path: Option<String>,
-    engine_root: Option<String>,
-    name: Option<String>,
+#[serde(tag = "action", rename_all = "snake_case")]
+enum ProjectRequest {
+    Status,
+    Setup {
+        uproject_path: Option<String>,
+        engine_root: Option<String>,
+        name: Option<String>,
+    },
+    UseProject {
+        project_name: String,
+    },
+    UseMcp {
+        mcp_id: String,
+    },
+    SaveMcp {
+        project: Option<String>,
+        mcp_id: String,
+        name: Option<String>,
+        host: String,
+        port: u16,
+        #[serde(default = "default_mcp_path")]
+        path: String,
+        #[serde(default = "default_mcp_transport")]
+        transport: String,
+        #[serde(default)]
+        auto_start: bool,
+        #[serde(default)]
+        activate: bool,
+    },
+    SetPluginSource {
+        local_path: Option<String>,
+        repo_url: Option<String>,
+    },
+    InstallPlugin,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct CompileProjectRequest {
-    target: Option<String>,
-    configuration: Option<String>,
+#[serde(tag = "action", rename_all = "snake_case")]
+enum EditorRequest {
+    Compile {
+        target: Option<String>,
+        configuration: Option<String>,
+    },
+    Launch {
+        #[serde(default = "default_wait_seconds")]
+        wait_seconds: u64,
+    },
+    Stop {
+        instance_key: Option<String>,
+        #[serde(default)]
+        force: bool,
+    },
+    Restart {
+        #[serde(default = "default_wait_seconds")]
+        wait_seconds: u64,
+        #[serde(default)]
+        force: bool,
+    },
+    Discover,
+    Use {
+        instance_key: String,
+    },
+    Health {
+        instance_key: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct LaunchEditorRequest {
-    #[serde(default = "default_wait_seconds")]
-    wait_seconds: u64,
+#[serde(tag = "action", rename_all = "snake_case")]
+enum SessionRequest {
+    Get {
+        instance_key: Option<String>,
+        scope: Option<String>,
+        #[serde(default = "default_session_limit")]
+        limit: usize,
+    },
+    AddNote {
+        content: String,
+    },
+    CrashReport,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct UseEditorRequest {
-    instance_key: String,
+#[serde(tag = "action", rename_all = "snake_case")]
+enum McpRequest {
+    ListTools {
+        project: Option<String>,
+        mcp: Option<String>,
+    },
+    CallTool {
+        project: Option<String>,
+        mcp: Option<String>,
+        tool_name: String,
+        #[serde(default)]
+        arguments: Value,
+    },
+    Sync {
+        project: Option<String>,
+        mcp: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct UseProjectRequest {
-    project_name: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct UseMcpRequest {
-    mcp_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct AddMcpRequest {
-    project: Option<String>,
-    mcp_id: String,
-    name: Option<String>,
-    host: String,
-    port: u16,
-    #[serde(default = "default_mcp_path")]
-    path: String,
-    #[serde(default = "default_mcp_transport")]
-    transport: String,
-    #[serde(default)]
-    auto_start: bool,
-    #[serde(default)]
-    activate: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct AddNoteRequest {
-    content: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct SetPluginSourceRequest {
-    local_path: Option<String>,
-    repo_url: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct McpSelectorRequest {
-    project: Option<String>,
-    mcp: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct McpCallRequest {
-    project: Option<String>,
-    mcp: Option<String>,
-    tool_name: String,
-    #[serde(default)]
-    arguments: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct InstanceHealthRequest {
-    instance_key: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct SessionRequest {
-    instance_key: Option<String>,
-    scope: Option<String>,
-    #[serde(default = "default_session_limit")]
-    limit: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct StopEditorRequest {
-    instance_key: Option<String>,
-    #[serde(default)]
-    force: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct RestartEditorRequest {
-    #[serde(default = "default_wait_seconds")]
-    wait_seconds: u64,
-    #[serde(default)]
-    force: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct NotesResponse {
-    notes: Vec<Note>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct ToolListResponse {
-    tools: Vec<ToolDescriptor>,
+struct ActionResponse {
+    action: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    data: Option<Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -159,319 +154,206 @@ impl ServerHandler for UnrealFacade {}
 #[tool_router(router = tool_router)]
 impl UnrealFacade {
     #[tool(
-        name = "setup_project",
-        description = "Configure a UE project and persist it as the active project."
+        name = "project",
+        description = "Project and config control for UnrealMCPHub. Actions: status, setup, use_project, use_mcp, save_mcp, set_plugin_source, install_plugin."
     )]
-    async fn setup_project(
+    async fn project(
         &self,
-        Parameters(request): Parameters<SetupProjectRequest>,
-    ) -> Result<Json<orchestrator::ProjectSummary>, String> {
-        let summary = orchestrator::setup_project(
-            request.uproject_path.map(Into::into),
-            request.engine_root.map(Into::into),
-            request.name,
-        )
-        .await
-        .map_err(to_tool_error)?;
-        Ok(Json(summary))
-    }
-
-    #[tool(
-        name = "get_project_config",
-        description = "List configured Unreal projects."
-    )]
-    async fn get_project_config(&self) -> Result<Json<Vec<orchestrator::ProjectSummary>>, String> {
-        Ok(Json(
-            orchestrator::get_project_config().map_err(to_tool_error)?,
-        ))
-    }
-
-    #[tool(
-        name = "hub_status",
-        description = "Get one-stop status for configured projects, instances, plugin source, and MCPHub submodule."
-    )]
-    async fn hub_status(&self) -> Result<Json<orchestrator::HubStatus>, String> {
-        Ok(Json(orchestrator::hub_status().map_err(to_tool_error)?))
-    }
-
-    #[tool(
-        name = "use_project",
-        description = "Switch the active configured Unreal project."
-    )]
-    async fn use_project(
-        &self,
-        Parameters(request): Parameters<UseProjectRequest>,
-    ) -> Result<String, String> {
-        let switched = orchestrator::use_project(&request.project_name).map_err(to_tool_error)?;
-        if switched {
-            Ok(format!(
-                "active project switched to {}",
-                request.project_name
-            ))
-        } else {
-            Err(format!("project '{}' not found", request.project_name))
+        Parameters(request): Parameters<ProjectRequest>,
+    ) -> Result<Json<ActionResponse>, String> {
+        match request {
+            ProjectRequest::Status => action_data("status", orchestrator::hub_status()),
+            ProjectRequest::Setup {
+                uproject_path,
+                engine_root,
+                name,
+            } => {
+                let summary = orchestrator::setup_project(
+                    uproject_path.map(Into::into),
+                    engine_root.map(Into::into),
+                    name,
+                )
+                .await
+                .map_err(to_tool_error)?;
+                action_data("setup", Ok(summary))
+            }
+            ProjectRequest::UseProject { project_name } => {
+                let switched = orchestrator::use_project(&project_name).map_err(to_tool_error)?;
+                if switched {
+                    Ok(action_message(
+                        "use_project",
+                        format!("active project switched to {}", project_name),
+                    ))
+                } else {
+                    Err(format!("project '{}' not found", project_name))
+                }
+            }
+            ProjectRequest::UseMcp { mcp_id } => {
+                let switched = orchestrator::use_mcp(&mcp_id).map_err(to_tool_error)?;
+                if switched {
+                    Ok(action_message(
+                        "use_mcp",
+                        format!("active mcp switched to {}", mcp_id),
+                    ))
+                } else {
+                    Err(format!("mcp '{}' not found", mcp_id))
+                }
+            }
+            ProjectRequest::SaveMcp {
+                project,
+                mcp_id,
+                name,
+                host,
+                port,
+                path,
+                transport,
+                auto_start,
+                activate,
+            } => action_data(
+                "save_mcp",
+                orchestrator::add_project_mcp(
+                    project.as_deref(),
+                    &mcp_id,
+                    name.as_deref(),
+                    &host,
+                    port,
+                    &path,
+                    &transport,
+                    auto_start,
+                    activate,
+                ),
+            ),
+            ProjectRequest::SetPluginSource {
+                local_path,
+                repo_url,
+            } => Ok(action_message(
+                "set_plugin_source",
+                orchestrator::set_plugin_source(local_path.as_deref(), repo_url.as_deref())
+                    .map_err(to_tool_error)?,
+            )),
+            ProjectRequest::InstallPlugin => Ok(action_message(
+                "install_plugin",
+                orchestrator::install_plugin().map_err(to_tool_error)?,
+            )),
         }
     }
 
     #[tool(
-        name = "use_mcp",
-        description = "Switch the active MCP target inside the active Unreal project."
+        name = "editor",
+        description = "Editor lifecycle and instance control. Actions: compile, launch, stop, restart, discover, use, health."
     )]
-    async fn use_mcp(
+    async fn editor(
         &self,
-        Parameters(request): Parameters<UseMcpRequest>,
-    ) -> Result<String, String> {
-        let switched = orchestrator::use_mcp(&request.mcp_id).map_err(to_tool_error)?;
-        if switched {
-            Ok(format!("active mcp switched to {}", request.mcp_id))
-        } else {
-            Err(format!("mcp '{}' not found", request.mcp_id))
+        Parameters(request): Parameters<EditorRequest>,
+    ) -> Result<Json<ActionResponse>, String> {
+        match request {
+            EditorRequest::Compile {
+                target,
+                configuration,
+            } => action_data(
+                "compile",
+                orchestrator::compile_project(target, configuration).await,
+            ),
+            EditorRequest::Launch { wait_seconds } => action_data(
+                "launch",
+                orchestrator::launch_editor(wait_seconds).await,
+            ),
+            EditorRequest::Stop {
+                instance_key,
+                force,
+            } => action_data(
+                "stop",
+                orchestrator::stop_editor(instance_key.as_deref(), force).await,
+            ),
+            EditorRequest::Restart {
+                wait_seconds,
+                force,
+            } => action_data(
+                "restart",
+                orchestrator::restart_editor(wait_seconds, force).await,
+            ),
+            EditorRequest::Discover => {
+                action_data("discover", orchestrator::discover_instances().await)
+            }
+            EditorRequest::Use { instance_key } => {
+                let switched = orchestrator::use_editor(&instance_key).map_err(to_tool_error)?;
+                if switched {
+                    Ok(action_message(
+                        "use",
+                        format!("active editor switched to {}", instance_key),
+                    ))
+                } else {
+                    Err(format!("instance '{}' not found", instance_key))
+                }
+            }
+            EditorRequest::Health { instance_key } => action_data(
+                "health",
+                orchestrator::get_instance_health(instance_key.as_deref()).await,
+            ),
         }
     }
 
     #[tool(
-        name = "add_project_mcp",
-        description = "Add or update one MCP target under a configured Unreal project."
+        name = "session",
+        description = "Session notes and crash context for the active or selected Unreal instance. Actions: get, add_note, crash_report."
     )]
-    async fn add_project_mcp(
-        &self,
-        Parameters(request): Parameters<AddMcpRequest>,
-    ) -> Result<Json<orchestrator::ProjectSummary>, String> {
-        Ok(Json(
-            orchestrator::add_project_mcp(
-                request.project.as_deref(),
-                &request.mcp_id,
-                request.name.as_deref(),
-                &request.host,
-                request.port,
-                &request.path,
-                &request.transport,
-                request.auto_start,
-                request.activate,
-            )
-            .map_err(to_tool_error)?,
-        ))
-    }
-
-    #[tool(
-        name = "compile_project",
-        description = "Compile the active Unreal project via UBT."
-    )]
-    async fn compile_project(
-        &self,
-        Parameters(request): Parameters<CompileProjectRequest>,
-    ) -> Result<String, String> {
-        orchestrator::compile_project(request.target, request.configuration)
-            .await
-            .map_err(to_tool_error)
-    }
-
-    #[tool(
-        name = "launch_editor",
-        description = "Launch UnrealEditor for the active project and optionally wait for MCP readiness."
-    )]
-    async fn launch_editor(
-        &self,
-        Parameters(request): Parameters<LaunchEditorRequest>,
-    ) -> Result<Json<orchestrator::LaunchResult>, String> {
-        Ok(Json(
-            orchestrator::launch_editor(request.wait_seconds)
-                .await
-                .map_err(to_tool_error)?,
-        ))
-    }
-
-    #[tool(
-        name = "stop_editor",
-        description = "Stop one UnrealEditor process by tracked instance or the active instance."
-    )]
-    async fn stop_editor(
-        &self,
-        Parameters(request): Parameters<StopEditorRequest>,
-    ) -> Result<Json<orchestrator::StopEditorResult>, String> {
-        Ok(Json(
-            orchestrator::stop_editor(request.instance_key.as_deref(), request.force)
-                .await
-                .map_err(to_tool_error)?,
-        ))
-    }
-
-    #[tool(
-        name = "restart_editor",
-        description = "Restart the active UnrealEditor and preserve crash/session context."
-    )]
-    async fn restart_editor(
-        &self,
-        Parameters(request): Parameters<RestartEditorRequest>,
-    ) -> Result<Json<orchestrator::RestartResult>, String> {
-        Ok(Json(
-            orchestrator::restart_editor(request.wait_seconds, request.force)
-                .await
-                .map_err(to_tool_error)?,
-        ))
-    }
-
-    #[tool(
-        name = "discover_instances",
-        description = "Probe configured MCP ports and register reachable Unreal instances."
-    )]
-    async fn discover_instances(&self) -> Result<Json<orchestrator::DiscoveryResult>, String> {
-        Ok(Json(
-            orchestrator::discover_instances()
-                .await
-                .map_err(to_tool_error)?,
-        ))
-    }
-
-    #[tool(
-        name = "use_editor",
-        description = "Switch the active Unreal instance by instance key."
-    )]
-    async fn use_editor(
-        &self,
-        Parameters(request): Parameters<UseEditorRequest>,
-    ) -> Result<String, String> {
-        let switched = orchestrator::use_editor(&request.instance_key).map_err(to_tool_error)?;
-        if switched {
-            Ok(format!(
-                "active editor switched to {}",
-                request.instance_key
-            ))
-        } else {
-            Err(format!("instance '{}' not found", request.instance_key))
-        }
-    }
-
-    #[tool(
-        name = "add_note",
-        description = "Attach a session note to the active Unreal instance."
-    )]
-    async fn add_note(
-        &self,
-        Parameters(request): Parameters<AddNoteRequest>,
-    ) -> Result<String, String> {
-        orchestrator::add_note(&request.content).map_err(to_tool_error)?;
-        Ok("note added".to_string())
-    }
-
-    #[tool(
-        name = "get_notes",
-        description = "List notes attached to the active Unreal instance."
-    )]
-    async fn get_notes(&self) -> Result<Json<NotesResponse>, String> {
-        Ok(Json(NotesResponse {
-            notes: orchestrator::get_notes().map_err(to_tool_error)?,
-        }))
-    }
-
-    #[tool(
-        name = "get_session",
-        description = "Return notes and call history for one Unreal instance or the active instance."
-    )]
-    async fn get_session(
+    async fn session(
         &self,
         Parameters(request): Parameters<SessionRequest>,
-    ) -> Result<Json<orchestrator::SessionReport>, String> {
-        Ok(Json(
-            orchestrator::get_session(
-                request.instance_key.as_deref(),
-                request.scope.as_deref(),
-                request.limit,
-            )
-            .map_err(to_tool_error)?,
-        ))
+    ) -> Result<Json<ActionResponse>, String> {
+        match request {
+            SessionRequest::Get {
+                instance_key,
+                scope,
+                limit,
+            } => action_data(
+                "get",
+                orchestrator::get_session(instance_key.as_deref(), scope.as_deref(), limit),
+            ),
+            SessionRequest::AddNote { content } => {
+                orchestrator::add_note(&content).map_err(to_tool_error)?;
+                Ok(action_message("add_note", "note added"))
+            }
+            SessionRequest::CrashReport => {
+                action_data("crash_report", orchestrator::get_crash_report())
+            }
+        }
     }
 
     #[tool(
-        name = "set_plugin_source",
-        description = "Configure a local path or repo URL for the UnrealCopilot plugin source."
+        name = "mcp",
+        description = "Forward or sync the active Unreal MCP target. Actions: list_tools, call_tool, sync."
     )]
-    async fn set_plugin_source(
+    async fn mcp(
         &self,
-        Parameters(request): Parameters<SetPluginSourceRequest>,
-    ) -> Result<String, String> {
-        orchestrator::set_plugin_source(request.local_path.as_deref(), request.repo_url.as_deref())
-            .map_err(to_tool_error)
-    }
-
-    #[tool(
-        name = "install_plugin",
-        description = "Install UnrealCopilot into the active project's Plugins directory."
-    )]
-    async fn install_plugin(&self) -> Result<String, String> {
-        orchestrator::install_plugin().map_err(to_tool_error)
-    }
-
-    #[tool(
-        name = "get_crash_report",
-        description = "Read the latest crash report from the active project's Saved/Crashes directory."
-    )]
-    async fn get_crash_report(&self) -> Result<Json<Option<orchestrator::CrashReport>>, String> {
-        Ok(Json(
-            orchestrator::get_crash_report().map_err(to_tool_error)?,
-        ))
-    }
-
-    #[tool(
-        name = "get_instance_health",
-        description = "Inspect process and MCP health for one Unreal instance or the active instance."
-    )]
-    async fn get_instance_health(
-        &self,
-        Parameters(request): Parameters<InstanceHealthRequest>,
-    ) -> Result<Json<orchestrator::InstanceHealthReport>, String> {
-        Ok(Json(
-            orchestrator::get_instance_health(request.instance_key.as_deref())
-                .await
-                .map_err(to_tool_error)?,
-        ))
-    }
-
-    #[tool(
-        name = "list_tools",
-        description = "List tools exposed by one configured MCP target, defaulting to the active project and mcp."
-    )]
-    async fn list_tools(
-        &self,
-        Parameters(request): Parameters<McpSelectorRequest>,
-    ) -> Result<Json<ToolListResponse>, String> {
-        Ok(Json(ToolListResponse {
-            tools: orchestrator::list_tools(request.project.as_deref(), request.mcp.as_deref())
-                .await
-                .map_err(to_tool_error)?,
-        }))
-    }
-
-    #[tool(
-        name = "call_tool",
-        description = "Call a tool on one configured MCP target, defaulting to the active project and mcp."
-    )]
-    async fn call_tool(
-        &self,
-        Parameters(request): Parameters<McpCallRequest>,
-    ) -> Result<Json<orchestrator::EndpointToolEnvelope>, String> {
-        Ok(Json(
-            orchestrator::call_tool(
-                request.project.as_deref(),
-                request.mcp.as_deref(),
-                &request.tool_name,
-                as_object(request.arguments).map_err(to_tool_error)?,
-            )
-            .await
-            .map_err(to_tool_error)?,
-        ))
-    }
-
-    #[tool(
-        name = "sync_mcphub",
-        description = "Mirror one configured MCP target into the bundled generic MCPHub registry and refresh its catalog."
-    )]
-    async fn sync_mcphub(
-        &self,
-        Parameters(request): Parameters<McpSelectorRequest>,
-    ) -> Result<String, String> {
-        orchestrator::sync_mcphub(request.project.as_deref(), request.mcp.as_deref())
-            .map_err(to_tool_error)
+        Parameters(request): Parameters<McpRequest>,
+    ) -> Result<Json<ActionResponse>, String> {
+        match request {
+            McpRequest::ListTools { project, mcp } => action_data(
+                "list_tools",
+                orchestrator::list_tools(project.as_deref(), mcp.as_deref()).await,
+            ),
+            McpRequest::CallTool {
+                project,
+                mcp,
+                tool_name,
+                arguments,
+            } => action_data(
+                "call_tool",
+                orchestrator::call_tool(
+                    project.as_deref(),
+                    mcp.as_deref(),
+                    &tool_name,
+                    as_object(arguments).map_err(to_tool_error)?,
+                )
+                .await,
+            ),
+            McpRequest::Sync { project, mcp } => Ok(action_message(
+                "sync",
+                orchestrator::sync_mcphub(project.as_deref(), mcp.as_deref())
+                    .map_err(to_tool_error)?,
+            )),
+        }
     }
 }
 
@@ -539,6 +421,26 @@ fn as_object(value: Value) -> Result<Map<String, Value>> {
             "expected an object for tool arguments, got {other}"
         )),
     }
+}
+
+fn action_data<T>(action: &str, result: anyhow::Result<T>) -> Result<Json<ActionResponse>, String>
+where
+    T: Serialize,
+{
+    let data = serde_json::to_value(result.map_err(to_tool_error)?).map_err(to_tool_error)?;
+    Ok(Json(ActionResponse {
+        action: action.to_string(),
+        message: None,
+        data: Some(data),
+    }))
+}
+
+fn action_message(action: &str, message: impl Into<String>) -> Json<ActionResponse> {
+    Json(ActionResponse {
+        action: action.to_string(),
+        message: Some(message.into()),
+        data: None,
+    })
 }
 
 fn to_tool_error(error: impl std::fmt::Display) -> String {

@@ -16,7 +16,7 @@ use crate::paths::{
     UnrealProjectPaths, find_uproject, normalize_endpoint_id, read_project_mcp_endpoints,
     resolve_project_paths,
 };
-use crate::process::{is_process_alive, terminate_process};
+use crate::process::{find_process_pid_by_command_line, is_process_alive, terminate_process};
 use crate::state::{InstanceState, Note, StateStore, ToolCallRecord, make_instance_key};
 use crate::submodule;
 use crate::ue_client::{EndpointHealth, ToolCallOutput, ToolDescriptor, UeClient};
@@ -58,6 +58,8 @@ pub struct HubStatus {
 pub struct LaunchResult {
     pub project_name: String,
     pub pid: u32,
+    #[serde(default)]
+    pub reused_existing: bool,
     #[serde(rename = "mcp_url")]
     pub endpoint_url: String,
     pub stdout_log: String,
@@ -432,6 +434,71 @@ pub async fn launch_editor(wait_seconds: u64) -> Result<LaunchResult> {
     let paths = active_project_paths()?;
     let project = active_project_entry()?;
     let endpoint = active_project_endpoint(&project)?;
+    let endpoint_url = project_endpoint_url(&endpoint);
+    if let Some(pid) = existing_editor_pid_for_launch(
+        &paths.project_name,
+        &endpoint,
+        &paths.uproject_path,
+        &paths.editor_exe,
+    )? {
+        let health = if wait_seconds > 0 {
+            wait_for_health(&endpoint_url, wait_seconds).await.ok()
+        } else {
+            None
+        };
+        let mut notes = vec![format!(
+            "Reused existing Unreal Editor process for '{}' (pid {}).",
+            paths.project_name, pid
+        )];
+        notes.extend(launch_endpoint_notes(
+            &paths.project_name,
+            &endpoint,
+            wait_seconds,
+            health.is_some(),
+        ));
+
+        let mut state = StateStore::load()?;
+        let key = make_instance_key(&paths.project_name, &endpoint.endpoint_id, endpoint.port);
+        state.upsert_instance(InstanceState {
+            key: key.clone(),
+            project_name: paths.project_name.clone(),
+            endpoint_id: endpoint.endpoint_id.clone(),
+            project_path: paths.uproject_path.display().to_string(),
+            engine_root: paths.engine_root.display().to_string(),
+            host: endpoint.host.clone(),
+            port: endpoint.port,
+            url: endpoint_url.clone(),
+            pid: Some(pid),
+            status: if health.is_some() {
+                "online"
+            } else {
+                "starting"
+            }
+            .to_string(),
+            last_seen: now_iso_like(),
+            crash_count: 0,
+            notes: Vec::new(),
+            call_history: Vec::new(),
+        })?;
+        state.update_instance_status(
+            &key,
+            if health.is_some() { "online" } else { "starting" },
+            Some(pid),
+        )?;
+        state.set_active_instance(&key)?;
+
+        return Ok(LaunchResult {
+            project_name: paths.project_name,
+            pid,
+            reused_existing: true,
+            endpoint_url,
+            stdout_log: String::new(),
+            stderr_log: String::new(),
+            health,
+            notes,
+        });
+    }
+
     let logs_dir = paths.project_dir.join("Saved").join("Logs");
     fs::create_dir_all(&logs_dir)
         .with_context(|| format!("failed to create {}", logs_dir.display()))?;
@@ -459,7 +526,6 @@ pub async fn launch_editor(wait_seconds: u64) -> Result<LaunchResult> {
     let pid = child
         .id()
         .ok_or_else(|| anyhow!("failed to capture process id"))?;
-    let endpoint_url = project_endpoint_url(&endpoint);
     let health = if wait_seconds > 0 {
         wait_for_health(&endpoint_url, wait_seconds).await.ok()
     } else {
@@ -495,6 +561,7 @@ pub async fn launch_editor(wait_seconds: u64) -> Result<LaunchResult> {
     Ok(LaunchResult {
         project_name: paths.project_name,
         pid,
+        reused_existing: false,
         endpoint_url,
         stdout_log: stdout_log.display().to_string(),
         stderr_log: stderr_log.display().to_string(),
@@ -512,6 +579,11 @@ pub async fn discover_instances() -> Result<DiscoveryResult> {
     for candidate in candidates {
         if UeClient::health_check(&candidate.url).await.is_ok() {
             let existing = state.get_instance(&candidate.instance_key).cloned();
+            let pid = existing
+                .as_ref()
+                .and_then(|instance| instance.pid)
+                .filter(|pid| is_process_alive(*pid))
+                .or_else(|| find_project_editor_pid(&candidate.project_path));
             state.upsert_instance(InstanceState {
                 key: candidate.instance_key.clone(),
                 project_name: candidate.project_name,
@@ -521,7 +593,7 @@ pub async fn discover_instances() -> Result<DiscoveryResult> {
                 host: candidate.host,
                 port: candidate.port,
                 url: candidate.url.clone(),
-                pid: existing.as_ref().and_then(|instance| instance.pid),
+                pid,
                 status: "online".to_string(),
                 last_seen: now_iso_like(),
                 crash_count: existing
@@ -540,7 +612,12 @@ pub async fn discover_instances() -> Result<DiscoveryResult> {
         if let Some(existing) = state.get_instance(&candidate.instance_key).cloned() {
             if matches!(existing.status.as_str(), "online" | "starting") {
                 let pid = existing.pid.filter(|pid| is_process_alive(*pid));
-                state.update_instance_status(&existing.key, "offline", pid)?;
+                let status = if pid.is_some() && existing.status == "starting" {
+                    "starting"
+                } else {
+                    "offline"
+                };
+                state.update_instance_status(&existing.key, status, pid)?;
             }
         }
     }
@@ -571,14 +648,6 @@ pub fn add_note(content: &str) -> Result<()> {
             content: content.to_string(),
         },
     )
-}
-
-pub fn get_notes() -> Result<Vec<Note>> {
-    let state = StateStore::load()?;
-    Ok(state
-        .get_active_instance()
-        .map(|instance| instance.notes.clone())
-        .unwrap_or_default())
 }
 
 pub fn get_session(
@@ -1595,6 +1664,60 @@ fn preferred_active_instance_for_endpoint<'a>(
     state.list_instances().into_iter().find(|instance| {
         instance.project_name == project_name && instance.endpoint_id == endpoint_id
     })
+}
+
+fn reusable_instance_for_endpoint(
+    project_name: &str,
+    endpoint: &ProjectMcpEndpoint,
+    uproject_path: &Path,
+) -> Result<Option<InstanceState>> {
+    let state = StateStore::load()?;
+    Ok(preferred_active_instance_for_endpoint(&state, project_name, &endpoint.endpoint_id)
+        .filter(|instance| {
+            instance.port == endpoint.port
+                && instance.host == endpoint.host
+                && same_path(Path::new(&instance.project_path), uproject_path)
+                && instance.pid.map(is_process_alive).unwrap_or(false)
+        })
+        .cloned())
+}
+
+fn existing_editor_pid_for_launch(
+    project_name: &str,
+    endpoint: &ProjectMcpEndpoint,
+    uproject_path: &Path,
+    editor_exe: &Path,
+) -> Result<Option<u32>> {
+    if let Some(instance) = reusable_instance_for_endpoint(project_name, endpoint, uproject_path)? {
+        if let Some(pid) = instance.pid {
+            return Ok(Some(pid));
+        }
+    }
+    Ok(find_editor_pid(editor_exe, uproject_path))
+}
+
+fn find_project_editor_pid(project_path: &str) -> Option<u32> {
+    let path = Path::new(project_path);
+    find_editor_pid(Path::new(default_editor_process_name()), path)
+}
+
+fn find_editor_pid(editor_exe: &Path, uproject_path: &Path) -> Option<u32> {
+    let process_name = editor_exe
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| default_editor_process_name().to_string());
+    let needle = uproject_path.display().to_string();
+    find_process_pid_by_command_line(&process_name, &needle)
+}
+
+fn default_editor_process_name() -> &'static str {
+    if cfg!(windows) {
+        "UnrealEditor.exe"
+    } else {
+        "UnrealEditor"
+    }
 }
 
 fn project_endpoint_url(endpoint: &ProjectMcpEndpoint) -> String {

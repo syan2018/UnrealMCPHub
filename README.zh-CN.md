@@ -239,6 +239,9 @@ target\debug\unreal-mcphub.exe status
 target\debug\unreal-mcphub.exe launch --wait-seconds 180
 ```
 
+如果当前 active project 关联的 Unreal Editor 进程已经存活，`launch` 现在会优先复用
+这个已跟踪实例，不会再为同一个 project / MCP target 额外拉起第二个 Editor。
+
 如果返回的 JSON 里出现 `health: null`，或者 note 中提示 `auto_start=false`，
 表示 Editor 已经启动，但在等待窗口内内嵌 endpoint 始终没有变成可连接状态。常见原因
 通常是插件未启用、MCP 服务未设置为自动启动，或者需要在 Editor 内手动打开。
@@ -320,25 +323,12 @@ target\debug\unreal-mcphub.exe serve --http --host 127.0.0.1 --port 9422
 
 当前暴露的 MCP tools：
 
-- `setup_project`
-- `get_project_config`
-- `hub_status`
-- `use_project`
-- `use_mcp`
-- `add_project_mcp`
-- `list_tools`
-- `call_tool`
-- `compile_project`
-- `launch_editor`
-- `stop_editor`
-- `restart_editor`
-- `discover_instances`
-- `use_editor`
-- `add_note`
-- `get_notes`
-- `get_session`
-- `set_plugin_source`
-- `install_plugin`
-- `get_crash_report`
-- `get_instance_health`
-- `sync_mcphub`
+- `project`
+  Actions: `status`、`setup`、`use_project`、`use_mcp`、`save_mcp`、
+  `set_plugin_source`、`install_plugin`
+- `editor`
+  Actions: `compile`、`launch`、`stop`、`restart`、`discover`、`use`、`health`
+- `session`
+  Actions: `get`、`add_note`、`crash_report`
+- `mcp`
+  Actions: `list_tools`、`call_tool`、`sync`

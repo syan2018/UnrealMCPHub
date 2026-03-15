@@ -34,6 +34,54 @@ pub fn is_process_alive(pid: u32) -> bool {
     }
 }
 
+pub fn find_process_pid_by_command_line(process_name: &str, command_line_fragment: &str) -> Option<u32> {
+    let process_name = process_name.trim();
+    let command_line_fragment = command_line_fragment.trim();
+    if process_name.is_empty() || command_line_fragment.is_empty() {
+        return None;
+    }
+
+    #[cfg(windows)]
+    {
+        let escaped_name = process_name.replace('\'', "''");
+        let escaped_fragment = command_line_fragment.replace('\'', "''");
+        let script = format!(
+            "$p = Get-CimInstance Win32_Process -Filter \"Name = '{escaped_name}'\" | Where-Object {{ $_.CommandLine -like '*{escaped_fragment}*' }} | Select-Object -First 1 -ExpandProperty ProcessId; if ($p) {{ Write-Output $p }}"
+        );
+        let Ok(output) = Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .output()
+        else {
+            return None;
+        };
+        if !output.status.success() {
+            return None;
+        }
+        String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .lines()
+            .next()
+            .and_then(|value| value.trim().parse::<u32>().ok())
+    }
+
+    #[cfg(not(windows))]
+    {
+        let Ok(output) = Command::new("ps").args(["-eo", "pid=,comm=,args="]).output() else {
+            return None;
+        };
+        if !output.status.success() {
+            return None;
+        }
+
+        String::from_utf8_lossy(&output.stdout).lines().find_map(|line| {
+            if !line.contains(process_name) || !line.contains(command_line_fragment) {
+                return None;
+            }
+            line.split_whitespace().next()?.parse::<u32>().ok()
+        })
+    }
+}
+
 pub fn terminate_process(pid: u32, force: bool) -> Result<bool> {
     if pid == 0 {
         bail!("pid must be greater than 0");

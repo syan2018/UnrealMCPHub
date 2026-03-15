@@ -255,6 +255,10 @@ Launch the editor and wait for MCP:
 target\debug\unreal-mcphub.exe launch --wait-seconds 180
 ```
 
+If the active project's tracked Unreal Editor process is already alive,
+`launch` now reuses that instance instead of spawning a second editor for the
+same project/MCP target.
+
 If the returned JSON includes `health: null` or a note about `auto_start=false`,
 the editor launched but the embedded endpoint never became reachable during the
 wait window. That usually means the plugin is disabled, its MCP server is not
@@ -342,28 +346,15 @@ target\debug\unreal-mcphub.exe serve --http --host 127.0.0.1 --port 9422
 
 Current MCP tools:
 
-- `setup_project`
-- `get_project_config`
-- `hub_status`
-- `use_project`
-- `use_mcp`
-- `add_project_mcp`
-- `list_tools`
-- `call_tool`
-- `compile_project`
-- `launch_editor`
-- `stop_editor`
-- `restart_editor`
-- `discover_instances`
-- `use_editor`
-- `add_note`
-- `get_notes`
-- `get_session`
-- `set_plugin_source`
-- `install_plugin`
-- `get_crash_report`
-- `get_instance_health`
-- `sync_mcphub`
+- `project`
+  Actions: `status`, `setup`, `use_project`, `use_mcp`, `save_mcp`,
+  `set_plugin_source`, `install_plugin`
+- `editor`
+  Actions: `compile`, `launch`, `stop`, `restart`, `discover`, `use`, `health`
+- `session`
+  Actions: `get`, `add_note`, `crash_report`
+- `mcp`
+  Actions: `list_tools`, `call_tool`, `sync`
 
 ## Verified Lyra Flow
 

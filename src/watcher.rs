@@ -99,6 +99,8 @@ async fn refresh_instances() -> anyhow::Result<()> {
                         && matches!(instance.status.as_str(), "online" | "starting")
                     {
                         state.mark_crashed(&instance.key)?;
+                    } else if instance.status == "starting" {
+                        state.update_instance_status(&instance.key, "starting", Some(pid))?;
                     } else {
                         state.update_instance_status(&instance.key, "offline", Some(pid))?;
                     }
